@@ -21,7 +21,18 @@
     <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
     <ServerGarbageCollector>false</ServerGarbageCollector>
     <TieredPGO>false</TieredPGO>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
   </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Folder with the flap sounds. To build with your own: -p:FlapDir=path\to\folder
+         (WAV files, mono, 16 bit, 44.1 kHz, plain 44-byte header). -->
+    <FlapDir Condition="'$(FlapDir)' == ''">Assets\flap</FlapDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- eight single clacks cut from a real split-flap recording (CC0), see THIRD-PARTY-NOTICES.md -->
+    <EmbeddedResource Include="$(FlapDir)\*.wav" />
+  </ItemGroup>
 
 </Project>

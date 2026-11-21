@@ -13,6 +13,7 @@ A small split-flap clock for the Windows desktop, in the style of the old airpor
 - **Scale it:** drag an edge or a corner. It is drawn as vector shapes, so it stays sharp at any size.
 - **Always on top:** click the pin in the top right corner. Amber means on.
 - **Black or white**, with or without seconds: right-click the clock.
+- **Flap sound:** every card lands with the clack of a real split-flap display, timed to the card. Right-click the clock and untick "Flap sound" to switch it off.
 - **Start with Windows:** right-click the clock and tick it.
 - It remembers where you put it, how big it is and how you set it.
 
@@ -22,31 +23,36 @@ Get it from the [Releases page](../../releases/latest). Two downloads do the sam
 
 | Download | Size | For whom |
 |---|---|---|
-| `FlipClock-1.0.0-small.zip` | 0.1 MB | PCs that have Microsoft's free [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download) installed |
-| `FlipClock-1.0.0-all-in-one.zip` | 53 MB (125 MB unpacked) | Any 64-bit Windows PC, nothing to install |
+| `FlipClock-…-small.zip` | under 1 MB | PCs that have Microsoft's free [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download) installed |
+| `FlipClock-…-all-in-one.zip` | about 53 MB (125 MB unpacked) | Any 64-bit Windows PC, nothing to install |
 
 There is no installer. Unpack the zip, put `FlipClock.exe` wherever you like and double-click it.
 
+### Updating from an older version
+
+Put the new `FlipClock.exe` over the old one. That is all: there is nothing to uninstall first, and your place, size and settings are kept.
+
+- If the old clock is still running, Windows will not let you replace the file. Right-click the clock, choose "Close", then copy the new file over it.
+- If you put the new file in a different folder, just start it. It takes the place of a running older copy (from version 1.1.0 on; a running 1.0.0 has to be closed by hand once), and if "Start with Windows" was ticked it now starts the new file. You never end up with two clocks. The old file can then be deleted.
+
 ### Is it safe?
 
-Both programs of version 1.0.0 were checked on VirusTotal on 21 November 2026. No antivirus engine flagged either of them:
-
-| Program | Result | SHA-256 of `FlipClock.exe` |
-|---|---|---|
-| small | [0 of 70 engines](https://www.virustotal.com/gui/file/7e36d1439d0e790362429395d105d7ae08221ac89ce4ad9c7b89e174db215ae8) | `7e36d1439d0e790362429395d105d7ae08221ac89ce4ad9c7b89e174db215ae8` |
-| all-in-one | [0 of 64 engines](https://www.virustotal.com/gui/file/221356253ae8b97c9455d946c9e7bda3022f6a8feb45a5191da0041bfe6b4eed) | `221356253ae8b97c9455d946c9e7bda3022f6a8feb45a5191da0041bfe6b4eed` |
+Every release is checked on [VirusTotal](https://www.virustotal.com) before it goes up. The result links and the SHA-256 checksums of both programs are in the notes of each release on the [Releases page](../../releases), so you can compare them with the file you downloaded.
 
 The program is not code-signed, because a signing certificate costs money and this is a free gift. Windows may therefore show a notice for an unknown publisher when you start it for the first time. If that worries you, do not take my word for it: the complete source code is in this repository, and you can read it and build the program yourself (see below).
 
 What the program does on your PC, in full:
 
 - It never connects to the internet. There is no network code in it.
+- With the flap sound on, it plays through your normal sound output, like any other program. It records nothing.
 - It saves its settings in one small file: `%APPDATA%\FlipClock\settings.json`.
 - Only if you tick "Start with Windows", it adds one entry to your own user's start-up list (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`). Untick it and the entry is gone.
 
 ## Light on the PC
 
-Between two changes of the display the clock does nothing at all. With seconds hidden it wakes up once a minute. Measured on the author's PC: 0 ms of processor time in 10 seconds at rest, about 30 MB of memory.
+Between two changes of the display the clock does nothing at all. With seconds hidden it wakes up once a minute. Measured on the author's PC: 0 ms of processor time in 10 seconds at rest, about 30 to 50 MB of memory.
+
+Showing seconds is the one thing that costs something, because a card then turns every second: about 9 % of one processor core on the author's PC, with the clock drawn large and the sound on. Version 1.0.0 needed about 21 % for the same. If you want it as light as possible, hide the seconds.
 
 ## Remove it
 
@@ -79,6 +85,7 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 MIT licence, see [LICENSE](LICENSE). Do what you like with it.
 
 - The pin icon is from [Lucide](https://lucide.dev) (ISC licence).
+- The flap sound is cut from the recording ["Split Flap Display" by ngruber](https://freesound.org/people/ngruber/sounds/261244/) (CC0).
 - The digits use Bahnschrift, a typeface that comes with Windows. It is not included here.
 - The all-in-one version contains Microsoft's .NET runtime (MIT licence).
 

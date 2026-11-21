@@ -10,6 +10,7 @@ public partial class App : Application
 {
     private const string MutexName = "FlipClock.SingleInstance.b61f";
     private const string EventName = "FlipClock.Activate.b61f";
+    private const string ExitEventName = "FlipClock.MakeRoom.b61f";
 
     private Mutex? _mutex;
     private ClockWindow? _window;
@@ -49,13 +50,28 @@ public partial class App : Application
         }
 #endif
 
-        // Only one clock. Starting it again just brings the running one to the front.
+        // Only one clock, ever.
         _mutex = new Mutex(true, MutexName, out bool first);
         if (!first)
         {
-            try { EventWaitHandle.OpenExisting(EventName).Set(); } catch { }
-            Shutdown();
-            return;
+            if (!AnotherCopyIsRunning())
+            {
+                // the same program was started twice: just bring the running clock to the front
+                try { EventWaitHandle.OpenExisting(EventName).Set(); } catch { }
+                Shutdown();
+                return;
+            }
+
+            // A different copy is running, usually the old version during an update.
+            // Ask it to close and take its place, so there are never two.
+            if (!TakeOver())
+            {
+                MessageBox.Show(
+                    "An older Flip Clock is still running.\n\nRight-click it, choose Close, and start this one again.",
+                    "Flip Clock", MessageBoxButton.OK, MessageBoxImage.Information);
+                Shutdown();
+                return;
+            }
         }
 
         var wake = new EventWaitHandle(false, EventResetMode.AutoReset, EventName);
@@ -68,8 +84,51 @@ public partial class App : Application
             }
         }) { IsBackground = true }.Start();
 
+        // a newer copy that is started later may ask this one to make room
+        var leave = new EventWaitHandle(false, EventResetMode.AutoReset, ExitEventName);
+        new Thread(() =>
+        {
+            leave.WaitOne();
+            Dispatcher.BeginInvoke(() =>
+            {
+                _window?.Close(); // saves place, size and settings
+                Shutdown();
+            });
+        }) { IsBackground = true }.Start();
+
         _window = new ClockWindow(Settings.Load());
         _window.Show();
+    }
+
+    /// <summary>Is a Flip Clock running from another file than this one?</summary>
+    private static bool AnotherCopyIsRunning()
+    {
+        string? me = Environment.ProcessPath;
+        if (me == null) return false;
+        foreach (var p in System.Diagnostics.Process.GetProcessesByName(Path.GetFileNameWithoutExtension(me)))
+        {
+            try
+            {
+                if (p.Id == Environment.ProcessId) continue;
+                string? other = p.MainModule?.FileName;
+                if (other != null && !string.Equals(other, me, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            catch { /* cannot look at it: treat it as the same program */ }
+            finally { p.Dispose(); }
+        }
+        return false;
+    }
+
+    /// <summary>Ask the running copy to close and wait until it has. False if it does not answer (version 1.0.0 cannot).</summary>
+    private bool TakeOver()
+    {
+        try
+        {
+            EventWaitHandle.OpenExisting(ExitEventName).Set();
+            try { return _mutex!.WaitOne(4000); }
+            catch (AbandonedMutexException) { return true; } // it closed without tidying up: fine, it is gone
+        }
+        catch { return false; }
     }
 
 #if TOOLS

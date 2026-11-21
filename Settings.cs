@@ -13,6 +13,7 @@ internal sealed class Settings
     public double Scale { get; set; } = DefaultScale;
     public bool Topmost { get; set; } = true;
     public bool Seconds { get; set; }
+    public bool Sound { get; set; } = true;
 
     /// <summary>"black" or "white".</summary>
     public string Style { get; set; } = "black";

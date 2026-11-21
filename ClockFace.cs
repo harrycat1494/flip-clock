@@ -23,6 +23,7 @@ internal sealed class SpacedText : FrameworkElement
         _spacing = spacing;
         _brush = brush;
         IsHitTestVisible = false;
+        CacheMode = Look.Cache;
         CapHeight = Make("H").BuildGeometry(new Point(0, 0)).Bounds.Height;
     }
 
@@ -144,6 +145,7 @@ internal sealed class HousingVisual : FrameworkElement
         _body = body;
         _slot = slot;
         IsHitTestVisible = false;
+        CacheMode = Look.Cache;
     }
 
     /// <summary>Fine noise, like powder-coated metal. Very low contrast on purpose.</summary>

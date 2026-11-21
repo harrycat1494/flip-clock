@@ -24,6 +24,14 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
+## Flap sound
+
+The eight short "clack" sounds in `Assets/flap` were cut from the recording
+"Split Flap Display" by ngruber, https://freesound.org/people/ngruber/sounds/261244/,
+and then made a little lower and duller, so they sound more like plastic cards than like metal.
+The author released it under Creative Commons 0 (public domain dedication,
+https://creativecommons.org/publicdomain/zero/1.0/), which asks for nothing in return. Thank you anyway.
+
 ## .NET runtime and Windows Desktop runtime (all-in-one version only)
 
 The all-in-one `FlipClock.exe` contains Microsoft's .NET runtime and Windows Desktop runtime,

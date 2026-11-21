@@ -11,4 +11,10 @@ Directory.Build.props
 # early test pictures
 preview/
 
+# post drafts, not part of the project
+reddit-kit/
+
 *.user
+
+# listening samples for choosing the flap sound
+sound-test/

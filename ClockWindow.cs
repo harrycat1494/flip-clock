@@ -21,11 +21,12 @@ internal sealed class ClockWindow : Window
     private readonly Settings _s;
     private readonly ClockFace _face;
     private readonly DispatcherTimer _timer = new(DispatcherPriority.Render);
+    private readonly DispatcherTimer _warmTimer = new(DispatcherPriority.Background);
     private MenuItem _miTop = null!, _miSeconds = null!, _miAutostart = null!, _miBlack = null!, _miWhite = null!;
 
     private IntPtr _hwnd;
     private double _scale;
-    private bool _resizing;
+    private bool _resizing, _fixingTop;
     private int _dirX, _dirY;
     private Native.POINT _startCursor;
     private Native.RECT _startRect;
@@ -44,17 +45,41 @@ internal sealed class ClockWindow : Window
         Topmost = _s.Topmost;
 
         Look.T = _s.Style == "white" ? Theme.White : Theme.Black;
+        FlapClips.Enable(_s.Sound);
         _face = new ClockFace(_s.Seconds) { Pinned = _s.Topmost };
         Content = new Viewbox { Child = _face, Stretch = Stretch.Uniform };
 
         ApplyScale();
         PlaceOnScreen();
+        KeepAutostartCurrent();
         ContextMenu = BuildMenu();
 
+        _warmTimer.Tick += (_, _) =>
+        {
+            _warmTimer.Stop();
+            FlapSound.Warm();
+        };
         Loaded += (_, _) =>
         {
-            Tick();
             TrimSoon(4000);
+            if (!FlapSound.Enabled)
+            {
+                Tick();
+                return;
+            }
+            // With sound: hold the start-up shuffle until the sound stream runs (at most 2 s),
+            // so the first cards are heard and not swallowed.
+            FlapSound.Warm();
+            int waited = 0;
+            var wait = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(30) };
+            wait.Tick += (_, _) =>
+            {
+                waited += 30;
+                if (!FlapSound.IsOpen && waited < 2000) return;
+                wait.Stop();
+                Tick();
+            };
+            wait.Start();
         };
         _timer.Tick += (_, _) => Tick();
         Closing += (_, _) => SaveState();
@@ -72,7 +97,9 @@ internal sealed class ClockWindow : Window
     private void Tick()
     {
         var now = DateTime.Now;
+        FlapModule.FrameRate = _face.Seconds ? 30 : 60;
         _face.SetTime(now);
+        KeepOnTop();
         // Sleep until the next change: the next full second with seconds shown, otherwise the next full minute.
         // Between changes the clock does nothing at all.
         double ms = _face.Seconds
@@ -80,6 +107,15 @@ internal sealed class ClockWindow : Window
             : 60000 - (now.Second * 1000 + now.Millisecond);
         _timer.Interval = TimeSpan.FromMilliseconds(ms + 12);
         _timer.Start();
+
+        // With the sound on, wake the sound stream a moment before the next change, so the first clack
+        // is on time. (With seconds shown the stream simply stays open between the seconds.)
+        _warmTimer.Stop();
+        if (FlapSound.Enabled && !_face.Seconds && ms > FlapSound.WarmUpMs + 200)
+        {
+            _warmTimer.Interval = TimeSpan.FromMilliseconds(ms + 12 - FlapSound.WarmUpMs);
+            _warmTimer.Start();
+        }
     }
 
     private void TrimSoon(int ms)
@@ -99,6 +135,20 @@ internal sealed class ClockWindow : Window
     {
         Width = _face.DesignW * _scale;
         Height = _face.DesignH * _scale;
+        SharpenCache();
+    }
+
+    /// <summary>Repaint the clock's stored pictures for the size it has now (see Look.Cache).</summary>
+    private void SharpenCache()
+    {
+        double dpi = _hwnd != IntPtr.Zero ? VisualTreeHelper.GetDpi(this).DpiScaleX : 1.5;
+        Look.SetCacheScale(_scale * dpi);
+    }
+
+    protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+    {
+        base.OnDpiChanged(oldDpi, newDpi);
+        Look.SetCacheScale(_scale * newDpi.DpiScaleX);
     }
 
     private void PlaceOnScreen()
@@ -136,6 +186,7 @@ internal sealed class ClockWindow : Window
         _s.Scale = _scale;
         _s.Topmost = Topmost;
         _s.Seconds = _face.Seconds;
+        _s.Sound = FlapSound.Enabled;
         _s.Style = Look.T.Name;
         _s.Save();
     }
@@ -147,6 +198,40 @@ internal sealed class ClockWindow : Window
         // a widget does not belong in Alt+Tab
         long ex = Native.GetWindowLongPtr(_hwnd, Native.GWL_EXSTYLE).ToInt64();
         Native.SetWindowLongPtr(_hwnd, Native.GWL_EXSTYLE, new IntPtr(ex | Native.WS_EX_TOOLWINDOW));
+
+        SharpenCache(); // now the real screen scaling is known
+
+        // Windows can take "always on top" away from a window (for example when the desktop is shown).
+        // Watch for that and take it back at once.
+        HwndSource.FromHwnd(_hwnd)?.AddHook(OnWindowMessage);
+    }
+
+    private IntPtr OnWindowMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (msg == Native.WM_WINDOWPOSCHANGED && Topmost && !_fixingTop && !HasTopmostFlag())
+            Dispatcher.BeginInvoke(KeepOnTop);
+        return IntPtr.Zero;
+    }
+
+    private bool HasTopmostFlag() =>
+        (Native.GetWindowLongPtr(_hwnd, Native.GWL_EXSTYLE).ToInt64() & Native.WS_EX_TOPMOST) != 0;
+
+    /// <summary>
+    /// If "always on top" is chosen, make sure it is really so: the flag is set and the clock is in front.
+    /// Runs at every change of the display. Left alone while the menu is open or the mouse is on the clock,
+    /// so it never jumps in front of its own menu or tooltip.
+    /// </summary>
+    private void KeepOnTop()
+    {
+        if (!Topmost || _hwnd == IntPtr.Zero || _resizing) return;
+        if (ContextMenu is { IsOpen: true } || IsMouseOver) return;
+        _fixingTop = true;
+        try
+        {
+            Native.SetWindowPos(_hwnd, Native.HWND_TOPMOST, 0, 0, 0, 0,
+                Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
+        }
+        finally { _fixingTop = false; }
     }
 
     public void BringToFront()
@@ -271,6 +356,7 @@ internal sealed class ClockWindow : Window
         _resizing = false;
         ReleaseMouseCapture();
         _scale = Math.Clamp(ActualWidth / _face.DesignW, MinScale, MaxScale);
+        SharpenCache(); // while dragging the stored pictures are only stretched; now make them sharp again
         SaveState();
         TrimSoon(1500);
     }
@@ -348,6 +434,24 @@ internal sealed class ClockWindow : Window
         catch { return false; }
     }
 
+    /// <summary>
+    /// If "Start with Windows" is ticked but still names another file (the old copy, after an update
+    /// into a different folder), point it at the program that is running now. Otherwise the old version
+    /// would come back at the next sign-in. Does nothing if the option is not ticked.
+    /// </summary>
+    private static void KeepAutostartCurrent()
+    {
+        try
+        {
+            if (Environment.ProcessPath is not string exe) return;
+            using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
+            if (key?.GetValue(RunName) is not string entry) return;
+            string wanted = $"\"{exe}\"";
+            if (!string.Equals(entry, wanted, StringComparison.OrdinalIgnoreCase)) key.SetValue(RunName, wanted);
+        }
+        catch { /* no access: leave it as it is */ }
+    }
+
     private static void SetAutostart(bool on)
     {
         try
@@ -375,6 +479,14 @@ internal sealed class ClockWindow : Window
             _miAutostart.IsChecked = AutostartOn();
         };
 
+        var sound = new MenuItem { Header = "Flap sound", IsChecked = FlapSound.Enabled };
+        sound.Click += (_, _) =>
+        {
+            FlapClips.Enable(!FlapSound.Enabled);
+            sound.IsChecked = FlapSound.Enabled;
+            SaveState();
+        };
+
         _miBlack = new MenuItem { Header = "Black", IsChecked = Look.T == Theme.Black };
         _miBlack.Click += (_, _) => SetStyle(Theme.Black);
         _miWhite = new MenuItem { Header = "White", IsChecked = Look.T == Theme.White };
@@ -393,6 +505,7 @@ internal sealed class ClockWindow : Window
         var menu = new ContextMenu();
         menu.Items.Add(_miTop);
         menu.Items.Add(_miSeconds);
+        menu.Items.Add(sound);
         menu.Items.Add(new Separator());
         menu.Items.Add(_miBlack);
         menu.Items.Add(_miWhite);

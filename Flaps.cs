@@ -14,6 +14,19 @@ internal static class Look
     public static Typeface DigitFace = new(new FontFamily("Bahnschrift"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
     public static readonly Typeface LabelFace = new(new FontFamily("Bahnschrift"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
 
+    /// <summary>
+    /// Every still part of the clock is painted once into a small picture and then only copied to the screen.
+    /// Without this the whole clock would be redrawn from its shapes for every single frame of a turning card.
+    /// The pictures are made at the clock's current size, so they stay sharp (see <see cref="SetCacheScale"/>).
+    /// </summary>
+    public static readonly System.Windows.Media.BitmapCache Cache = new() { RenderAtScale = 1, SnapsToDevicePixels = true, EnableClearType = false };
+
+    public static void SetCacheScale(double pixelsPerUnit)
+    {
+        double s = Math.Clamp(pixelsPerUnit, 0.5, 4);
+        if (Math.Abs(Cache.RenderAtScale - s) > 0.01) Cache.RenderAtScale = s;
+    }
+
     /// <summary>The colours in use right now (black or white clock).</summary>
     public static Theme T
     {
@@ -234,6 +247,7 @@ internal sealed class HalfFace : FrameworkElement
         Width = width;
         Height = Look.ModH;
         IsHitTestVisible = false;
+        CacheMode = Look.Cache;
     }
 
     public char Char
@@ -306,6 +320,7 @@ internal sealed class HalfShade : FrameworkElement
         Height = Look.ModH;
         Opacity = 0;
         IsHitTestVisible = false;
+        CacheMode = Look.Cache;
     }
 
     protected override void OnRender(DrawingContext dc)
@@ -324,6 +339,7 @@ internal sealed class HingePins : FrameworkElement
         Width = Look.ModW;
         Height = Look.ModH;
         IsHitTestVisible = false;
+        CacheMode = Look.Cache;
     }
 
     protected override void OnRender(DrawingContext dc)
@@ -338,6 +354,9 @@ internal sealed class HingePins : FrameworkElement
 /// <summary>A falling flap accelerates like a real one and settles with a tiny rebound.</summary>
 internal sealed class FallEase : EasingFunctionBase
 {
+    /// <summary>The part of a settling flip after which the card first touches the stack.</summary>
+    public const double LandAt = 0.76;
+
     public bool Settle { get; set; }
 
     public FallEase() => EasingMode = EasingMode.EaseIn;
@@ -345,9 +364,8 @@ internal sealed class FallEase : EasingFunctionBase
     protected override double EaseInCore(double t)
     {
         if (!Settle) return Math.Pow(t, 1.5);
-        const double land = 0.76;
-        if (t < land) return Math.Pow(t / land, 2.2);
-        return 1 - 0.05 * Math.Sin((t - land) / (1 - land) * Math.PI);
+        if (t < LandAt) return Math.Pow(t / LandAt, 2.2);
+        return 1 - 0.05 * Math.Sin((t - LandAt) / (1 - LandAt) * Math.PI);
     }
 
     protected override Freezable CreateInstanceCore() => new FallEase();
@@ -367,6 +385,12 @@ internal sealed class FlapModule : Canvas
 {
     private const string Deck = " 0123456789";
     private const double FastMs = 82, FinalMs = 330;
+
+    /// <summary>
+    /// Pictures per second while a card turns. 60 is smoothest. With seconds shown a card turns every second,
+    /// so the clock uses 30 there and halves the work.
+    /// </summary>
+    public static int FrameRate = 60;
 
     public static readonly DependencyProperty AngleProperty = DependencyProperty.Register(
         nameof(Angle), typeof(double), typeof(FlapModule),
@@ -479,11 +503,15 @@ internal sealed class FlapModule : Canvas
         Pose(0);
 
         bool last = Steps(_next, _target) == 0;
+        // Order the clack now, for the exact moment this card reaches the stack. It no longer depends
+        // on which picture frames happen to be drawn, so every card is heard, the fast ones too.
+        FlapSound.Hit(last ? FinalMs * FallEase.LandAt : FastMs);
         var anim = new DoubleAnimation(0, 180, TimeSpan.FromMilliseconds(last ? FinalMs : FastMs))
         {
             EasingFunction = new FallEase { Settle = last },
             FillBehavior = FillBehavior.HoldEnd,
         };
+        Timeline.SetDesiredFrameRate(anim, FrameRate);
         anim.Completed += (_, _) => EndFlip();
         BeginAnimation(AngleProperty, anim);
     }
