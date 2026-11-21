@@ -1,0 +1,14 @@
+# built programs and download packages (they go into a release, not into the source)
+app/
+portable/
+release/
+bin/
+obj/
+
+# local build setting of the maker's PC
+Directory.Build.props
+
+# early test pictures
+preview/
+
+*.user
