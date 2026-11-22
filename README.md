@@ -15,7 +15,7 @@ A small split-flap clock for the Windows desktop, in the style of the old airpor
 - **Always on top:** click the pin in the top right corner. Amber means on. While a full-screen program runs (a film, a game, a presentation) the clock steps aside and comes back afterwards.
 - **Black or white**, with or without seconds: right-click the clock.
 - **Flap sound:** every card lands with the clack of a real split-flap display, timed to the card. Right-click the clock to choose: every flip, only on the full hour (a short rattle once an hour), or off.
-- **Alarm:** click the bell. The cards show the alarm time; click the upper or lower half of a card (or scroll over it) to change it, then click the bell again. The bell turns amber and the alarm time stands next to it. At that time the clock beeps like an old digital alarm clock, every day, until you click it (it gives up after a minute). Click the amber bell to switch the alarm off.
+- **Alarm:** click the bell. The cards show the alarm time: click the arrow above or below a card (or scroll over it) to change it, then press Done. Cancel leaves everything as it was. The bell turns amber and the alarm time stands next to it. At that time the clock beeps like an old digital alarm clock and its digits flash red. Click the clock to silence it; if nobody does, it stops by itself after one minute and rings again the next day. Click the amber bell to switch the alarm off.
 - **Start with Windows:** right-click the clock and tick it.
 - It remembers where you put it, how big it is and how you set it.
 
