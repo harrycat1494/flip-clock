@@ -2,9 +2,9 @@
 
 Flip Clock itself is under the MIT licence (see LICENSE). It uses the following work by others.
 
-## Lucide (pin icon)
+## Lucide (pin and bell icons)
 
-The outline of the pin in the clock's header is taken from the Lucide icon set, https://lucide.dev.
+The outlines of the pin and the bell in the clock's header are taken from the Lucide icon set, https://lucide.dev.
 
 ```
 ISC License

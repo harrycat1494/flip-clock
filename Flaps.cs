@@ -27,6 +27,24 @@ internal static class Look
         if (Math.Abs(Cache.RenderAtScale - s) > 0.01) Cache.RenderAtScale = s;
     }
 
+    /// <summary>While the alarm rings the digits flash red: true during the red half of each flash.</summary>
+    public static bool AlarmFlash;
+
+    public static readonly Color AlarmRed = Color.FromRgb(0xFF, 0x3B, 0x2F);
+    public static readonly Brush AlarmBrush = Solid(AlarmRed);
+    public static readonly Brush AlarmFill = Solid(Color.FromArgb(0x50, 0xFF, 0x3B, 0x2F));
+    public static readonly Pen AlarmPen = Stroke(Solid(AlarmRed), 2, round: true);
+    public static readonly Brush AlarmGlow = MakeAlarmGlow();
+
+    private static Brush MakeAlarmGlow()
+    {
+        var b = new RadialGradientBrush();
+        b.GradientStops.Add(new GradientStop(Color.FromArgb(0x70, 0xFF, 0x3B, 0x2F), 0));
+        b.GradientStops.Add(new GradientStop(Color.FromArgb(0x00, 0xFF, 0x3B, 0x2F), 1));
+        b.Freeze();
+        return b;
+    }
+
     /// <summary>The colours in use right now (black or white clock).</summary>
     public static Theme T
     {
@@ -272,6 +290,7 @@ internal sealed class HalfFace : FrameworkElement
         double h = Look.ModH, half = h / 2, s = Look.Split / 2, r = Look.Radius;
         var card = new Rect(0, 0, _w, h);
         var t = Look.T;
+        var ink = Look.AlarmFlash ? Look.AlarmBrush : t.Digit; // red while the alarm flashes
 
         dc.PushClip(new RectangleGeometry(HalfRect(_top, _w)));
         dc.DrawRoundedRectangle(_top ? t.CardTop : t.CardBottom, null, card, r, r);
@@ -279,11 +298,11 @@ internal sealed class HalfFace : FrameworkElement
         if (_colon)
         {
             double d = 9.5, cy = _top ? h * 0.345 : h * 0.655;
-            dc.DrawRoundedRectangle(t.Digit, null, new Rect((_w - d) / 2, cy - d / 2, d, d), 2, 2);
+            dc.DrawRoundedRectangle(ink, null, new Rect((_w - d) / 2, cy - d / 2, d, d), 2, 2);
         }
         else
         {
-            dc.DrawGeometry(t.Digit, null, Glyphs.Get(_ch));
+            dc.DrawGeometry(ink, null, Glyphs.Get(_ch));
         }
 
         if (_top)
@@ -437,6 +456,15 @@ internal sealed class FlapModule : Canvas
         Children.Add(new HingePins());
     }
 
+    /// <summary>Paint the cards again (their colour changed).</summary>
+    public void Repaint()
+    {
+        _staticTop.InvalidateVisual();
+        _staticBottom.InvalidateVisual();
+        _flapFront.InvalidateVisual();
+        _flapBack.InvalidateVisual();
+    }
+
     /// <summary>Turn forward until the module shows <paramref name="c"/>.</summary>
     public void SetTarget(char c)
     {
@@ -569,5 +597,11 @@ internal sealed class ColonModule : Canvas
         Height = Look.ModH;
         Children.Add(new HalfFace(true, Look.ColonW, colon: true));
         Children.Add(new HalfFace(false, Look.ColonW, colon: true));
+    }
+
+    /// <summary>Paint the dots again (their colour changed).</summary>
+    public void Repaint()
+    {
+        foreach (UIElement child in Children) child.InvalidateVisual();
     }
 }

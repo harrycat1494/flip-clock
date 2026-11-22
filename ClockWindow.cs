@@ -22,7 +22,18 @@ internal sealed class ClockWindow : Window
     private readonly ClockFace _face;
     private readonly DispatcherTimer _timer = new(DispatcherPriority.Render);
     private readonly DispatcherTimer _warmTimer = new(DispatcherPriority.Background);
-    private MenuItem _miTop = null!, _miSeconds = null!, _miAutostart = null!, _miBlack = null!, _miWhite = null!;
+    private readonly DispatcherTimer _hourOff = new() { Interval = TimeSpan.FromMilliseconds(900) };
+    private string _soundMode = "flip"; // "off", "flip" = every card, "hour" = only at the full hour
+    private MenuItem _miSoundFlip = null!, _miSoundHour = null!, _miSoundOff = null!;
+    private readonly DispatcherTimer _alarmWarmTimer = new(DispatcherPriority.Background);
+    private readonly DispatcherTimer _ringTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private readonly DispatcherTimer _setIdle = new() { Interval = TimeSpan.FromSeconds(30) };
+    private readonly DispatcherTimer _flashOff = new() { Interval = TimeSpan.FromMilliseconds(500) };
+    private int _prevHour, _prevMinute;
+    private MenuItem _miTop = null!, _miSeconds = null!, _miAutostart = null!, _miBlack = null!, _miWhite = null!, _miAlarm = null!;
+    private bool _setting, _ringing;
+    private int _ringLeft;
+    private string _lastRung = "";
 
     private IntPtr _hwnd;
     private double _scale;
@@ -45,9 +56,24 @@ internal sealed class ClockWindow : Window
         Topmost = _s.Topmost;
 
         Look.T = _s.Style == "white" ? Theme.White : Theme.Black;
-        FlapClips.Enable(_s.Sound);
+        _soundMode = _s.SoundMode is "off" or "hour" ? _s.SoundMode : "flip";
+        ApplySoundMode();
         _face = new ClockFace(_s.Seconds) { Pinned = _s.Topmost };
+        _face.SetAlarm(_s.AlarmOn, _s.AlarmHour, _s.AlarmMinute);
         Content = new Viewbox { Child = _face, Stretch = Stretch.Uniform };
+
+        _alarmWarmTimer.Tick += (_, _) =>
+        {
+            _alarmWarmTimer.Stop();
+            AlarmSound.Warm();
+        };
+        _ringTimer.Tick += (_, _) => RingTick();
+        _flashOff.Tick += (_, _) =>
+        {
+            _flashOff.Stop();
+            _face.SetAlarmFlash(false);
+        };
+        _setIdle.Tick += (_, _) => CancelSet(); // nothing touched for 30 s: back to the clock, nothing changed
 
         ApplyScale();
         PlaceOnScreen();
@@ -57,7 +83,12 @@ internal sealed class ClockWindow : Window
         _warmTimer.Tick += (_, _) =>
         {
             _warmTimer.Stop();
-            FlapSound.Warm();
+            FlapSound.WarmAlways();
+        };
+        _hourOff.Tick += (_, _) =>
+        {
+            _hourOff.Stop();
+            if (_soundMode == "hour") FlapSound.Enabled = false; // clacks already ordered still play
         };
         Loaded += (_, _) =>
         {
@@ -98,8 +129,17 @@ internal sealed class ClockWindow : Window
     {
         var now = DateTime.Now;
         FlapModule.FrameRate = _face.Seconds ? 30 : 60;
-        _face.SetTime(now);
+        if (_soundMode == "hour")
+        {
+            // only the cards that turn at the full hour are heard; switched off again a moment later
+            bool fullHour = now.Minute == 0 && now.Second == 0;
+            FlapSound.Enabled = fullHour;
+            _hourOff.Stop();
+            if (fullHour) _hourOff.Start();
+        }
+        if (!_setting) _face.SetTime(now); // while the alarm is being set the cards show the alarm time
         KeepOnTop();
+        CheckAlarm(now);
         // Sleep until the next change: the next full second with seconds shown, otherwise the next full minute.
         // Between changes the clock does nothing at all.
         double ms = _face.Seconds
@@ -111,11 +151,165 @@ internal sealed class ClockWindow : Window
         // With the sound on, wake the sound stream a moment before the next change, so the first clack
         // is on time. (With seconds shown the stream simply stays open between the seconds.)
         _warmTimer.Stop();
-        if (FlapSound.Enabled && !_face.Seconds && ms > FlapSound.WarmUpMs + 200)
+        double toNextMinute = 60000 - (now.Second * 1000 + now.Millisecond);
+        bool clackAtNextMinute = (_soundMode == "flip" && !_face.Seconds)
+                                 || (_soundMode == "hour" && now.AddMinutes(1).Minute == 0);
+        if (clackAtNextMinute)
         {
-            _warmTimer.Interval = TimeSpan.FromMilliseconds(ms + 12 - FlapSound.WarmUpMs);
+            _warmTimer.Interval = TimeSpan.FromMilliseconds(Math.Max(1, toNextMinute - FlapSound.WarmUpMs));
             _warmTimer.Start();
         }
+
+        // The same for the alarm, which must sound even with the flap sound off:
+        // if it is due at the next full minute, wake the stream shortly before.
+        _alarmWarmTimer.Stop();
+        var next = now.AddMinutes(1);
+        if (_s.AlarmOn && next.Hour == _s.AlarmHour && next.Minute == _s.AlarmMinute)
+        {
+            double toMinute = 60000 - (now.Second * 1000 + now.Millisecond);
+            _alarmWarmTimer.Interval = TimeSpan.FromMilliseconds(Math.Max(1, toMinute - FlapSound.WarmUpMs));
+            _alarmWarmTimer.Start();
+        }
+    }
+
+    // ---------- alarm ----------
+
+    /// <summary>Ring when the alarm minute begins. A minute that passed while the PC slept is not made up for.</summary>
+    private void CheckAlarm(DateTime now)
+    {
+        if (!_s.AlarmOn || _ringing || _setting) return;
+        if (now.Hour != _s.AlarmHour || now.Minute != _s.AlarmMinute || now.Second > 2) return;
+        string key = now.ToString("yyyyMMddHHmm");
+        if (key == _lastRung) return;
+        _lastRung = key;
+        StartRinging();
+    }
+
+    private void StartRinging()
+    {
+        _ringing = true;
+        _ringLeft = 60; // one minute, then it stops by itself: nobody may be there to switch it off
+        RingOnce();
+        _ringTimer.Start();
+    }
+
+    private void RingTick()
+    {
+        if (--_ringLeft <= 0)
+        {
+            StopRinging();
+            return;
+        }
+        RingOnce();
+    }
+
+    /// <summary>One second of alarm: four beeps, and digits, dots and bell red for the first half second.</summary>
+    private void RingOnce()
+    {
+        AlarmSound.RingOneSecond();
+        _face.SetAlarmFlash(true);
+        _flashOff.Stop();
+        _flashOff.Start();
+    }
+
+    private void StopRinging()
+    {
+        _ringing = false;
+        _ringTimer.Stop();
+        _flashOff.Stop();
+        _face.SetAlarmFlash(false);
+    }
+
+    /// <summary>Show the alarm time on the cards so it can be changed.</summary>
+    private void EnterSetMode()
+    {
+        if (_ringing) StopRinging();
+        if (!_setting)
+        {
+            // remember how it was, for Cancel
+            _prevHour = _s.AlarmHour;
+            _prevMinute = _s.AlarmMinute;
+        }
+        _setting = true;
+        _face.SetSetMode(true);
+        _face.ShowAlarmDigits(_s.AlarmHour, _s.AlarmMinute, turn: true);
+        _setIdle.Stop();
+        _setIdle.Start();
+    }
+
+    /// <summary>Back to the clock, alarm as it was before.</summary>
+    private void CancelSet()
+    {
+        if (!_setting) return;
+        _setIdle.Stop();
+        _setting = false;
+        _s.AlarmHour = _prevHour;
+        _s.AlarmMinute = _prevMinute;
+        _face.SetSetMode(false);
+        _face.SetAlarm(_s.AlarmOn, _s.AlarmHour, _s.AlarmMinute);
+        Tick();
+    }
+
+    /// <summary>Done setting: the alarm is on, the cards turn back to the time.</summary>
+    private void ConfirmSet()
+    {
+        if (!_setting) return;
+        _setIdle.Stop();
+        _setting = false;
+        _s.AlarmOn = true;
+        _face.SetSetMode(false);
+        _face.SetAlarm(true, _s.AlarmHour, _s.AlarmMinute);
+        SaveState();
+        Tick();
+    }
+
+    private void SetAlarmOn(bool on)
+    {
+        if (_setting)
+        {
+            _setIdle.Stop();
+            _setting = false;
+            _face.SetSetMode(false);
+        }
+        if (!on && _ringing) StopRinging();
+        _s.AlarmOn = on;
+        _face.SetAlarm(on, _s.AlarmHour, _s.AlarmMinute);
+        SaveState();
+        Tick();
+    }
+
+    /// <summary>Which digit of the alarm time is under the mouse: 0 and 1 hours, 2 and 3 minutes, -1 none.</summary>
+    private int AlarmDigitAt(Point onFace)
+    {
+        for (int i = 0; i < 4; i++)
+        {
+            var r = _face.DigitRect(i);
+            r.Inflate(4, 0);
+            if (r.Contains(onFace)) return i;
+        }
+        return -1;
+    }
+
+    /// <summary>Change the alarm time: hours by one, minutes by one, the tens-of-minutes digit by ten.</summary>
+    private void AdjustAlarm(int digit, int direction)
+    {
+        if (digit < 2) _s.AlarmHour = (_s.AlarmHour + direction + 24) % 24;
+        else
+        {
+            int step = digit == 2 ? 10 : 1;
+            _s.AlarmMinute = (_s.AlarmMinute + direction * step + 60) % 60;
+        }
+        _face.ShowAlarmDigits(_s.AlarmHour, _s.AlarmMinute, turn: direction > 0);
+        _setIdle.Stop();
+        _setIdle.Start();
+    }
+
+    protected override void OnMouseWheel(MouseWheelEventArgs e)
+    {
+        base.OnMouseWheel(e);
+        if (!_setting) return;
+        int digit = AlarmDigitAt(e.GetPosition(_face));
+        if (digit >= 0) AdjustAlarm(digit, e.Delta > 0 ? 1 : -1);
     }
 
     private void TrimSoon(int ms)
@@ -186,7 +380,8 @@ internal sealed class ClockWindow : Window
         _s.Scale = _scale;
         _s.Topmost = Topmost;
         _s.Seconds = _face.Seconds;
-        _s.Sound = FlapSound.Enabled;
+        _s.SoundMode = _soundMode;
+        _s.Sound = _soundMode != "off"; // read by versions before 1.2
         _s.Style = Look.T.Name;
         _s.Save();
     }
@@ -210,7 +405,48 @@ internal sealed class ClockWindow : Window
     {
         if (msg == Native.WM_WINDOWPOSCHANGED && Topmost && !_fixingTop && !HasTopmostFlag())
             Dispatcher.BeginInvoke(KeepOnTop);
+
+        if (msg == Native.WM_MOVING && SnapToCentre(lParam))
+        {
+            handled = true;
+            return new IntPtr(1);
+        }
         return IntPtr.Zero;
+    }
+
+    /// <summary>
+    /// While the clock is dragged: when its middle comes close to the middle of the screen it is on,
+    /// it catches there. Left-right and up-down are caught separately, so it can sit centred horizontally
+    /// and still be slid freely up and down. Holding Ctrl places it freely.
+    /// </summary>
+    private bool SnapToCentre(IntPtr movingRect)
+    {
+        if ((Native.GetKeyState(Native.VK_CONTROL) & 0x8000) != 0) return false;
+
+        var r = System.Runtime.InteropServices.Marshal.PtrToStructure<Native.RECT>(movingRect);
+        var info = new Native.MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<Native.MONITORINFO>() };
+        if (!Native.GetMonitorInfo(Native.MonitorFromRect(ref r, Native.MONITOR_DEFAULTTONEAREST), ref info)) return false;
+
+        int w = r.Right - r.Left, h = r.Bottom - r.Top;
+        int cx = r.Left + w / 2, cy = r.Top + h / 2;
+        int screenX = (info.rcMonitor.Left + info.rcMonitor.Right) / 2, screenY = (info.rcMonitor.Top + info.rcMonitor.Bottom) / 2;
+        int reach = (int)(14 * VisualTreeHelper.GetDpi(this).DpiScaleX);
+
+        bool caught = false;
+        if (Math.Abs(cx - screenX) <= reach)
+        {
+            r.Left = screenX - w / 2;
+            r.Right = r.Left + w;
+            caught = true;
+        }
+        if (Math.Abs(cy - screenY) <= reach)
+        {
+            r.Top = screenY - h / 2;
+            r.Bottom = r.Top + h;
+            caught = true;
+        }
+        if (caught) System.Runtime.InteropServices.Marshal.StructureToPtr(r, movingRect, false);
+        return caught;
     }
 
     private bool HasTopmostFlag() =>
@@ -270,15 +506,53 @@ internal sealed class ClockWindow : Window
     }
 
     private bool OverPin(MouseEventArgs e) => _face.PinRect.Contains(e.GetPosition(_face));
+    private bool OverBell(MouseEventArgs e) => _face.BellRect.Contains(e.GetPosition(_face));
 
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
     {
         base.OnMouseLeftButtonDown(e);
 
-        if (OverPin(e))
+        if (_ringing)
+        {
+            StopRinging(); // any click on the clock silences the alarm; it stays set for tomorrow
+            return;
+        }
+
+        if (!_setting && OverPin(e))
         {
             SetTopmost(!Topmost);
             return;
+        }
+
+        if (!_setting && OverBell(e))
+        {
+            // bell: off -> set the time; on -> off
+            if (_s.AlarmOn) SetAlarmOn(false);
+            else EnterSetMode();
+            return;
+        }
+
+        if (_setting)
+        {
+            var p = e.GetPosition(_face);
+            if (_face.DoneRect.Contains(p))
+            {
+                ConfirmSet();
+                return;
+            }
+            if (_face.CancelRect.Contains(p))
+            {
+                CancelSet();
+                return;
+            }
+            int digit = AlarmDigitAt(p);
+            if (digit >= 0)
+            {
+                // upper half of a card: up, lower half: down
+                var r = _face.DigitRect(digit);
+                AdjustAlarm(digit, p.Y < r.Top + r.Height / 2 ? 1 : -1);
+                return;
+            }
         }
 
         var (zx, zy) = Zone(e.GetPosition(this));
@@ -307,9 +581,13 @@ internal sealed class ClockWindow : Window
             return;
         }
 
-        bool pin = OverPin(e);
+        var onFace = e.GetPosition(_face);
+        bool pin = !_setting && OverPin(e), bell = !_setting && OverBell(e);
+        bool done = _setting && _face.DoneRect.Contains(onFace), cancel = _setting && _face.CancelRect.Contains(onFace);
         _face.SetPinHover(pin);
-        if (pin)
+        _face.SetBellHover(bell);
+        _face.SetSetButtonsHover(done, cancel);
+        if (pin || bell || done || cancel || (_setting && AlarmDigitAt(onFace) >= 0))
         {
             Cursor = Cursors.Hand;
             return;
@@ -381,9 +659,45 @@ internal sealed class ClockWindow : Window
         if (_resizing) return;
         _face.SetHover(false);
         _face.SetPinHover(false);
+        _face.SetBellHover(false);
+    }
+
+    /// <summary>After the face was rebuilt (seconds, colour): put the alarm display back.</summary>
+    private void RestoreAlarmDisplay()
+    {
+        _setIdle.Stop();
+        _setting = false;
+        _face.SetAlarm(_s.AlarmOn, _s.AlarmHour, _s.AlarmMinute);
     }
 
     // ---------- options ----------
+
+    /// <summary>Flap sound: "flip" = every card, "hour" = only the cards that turn at the full hour, "off".</summary>
+    private void ApplySoundMode()
+    {
+        if (_soundMode == "flip") FlapClips.Enable(true);
+        else
+        {
+            FlapSound.Enabled = false;                   // "hour" switches it on for a moment at each full hour
+            if (_soundMode == "hour") FlapClips.Prepare(); // have the clacks loaded by then
+        }
+    }
+
+    private void SetSoundMode(string mode)
+    {
+        _soundMode = mode;
+        ApplySoundMode();
+        ShowSoundMode();
+        SaveState();
+        Tick(); // the wake-up of the sound stream depends on the mode
+    }
+
+    private void ShowSoundMode()
+    {
+        _miSoundFlip.IsChecked = _soundMode == "flip";
+        _miSoundHour.IsChecked = _soundMode == "hour";
+        _miSoundOff.IsChecked = _soundMode == "off";
+    }
 
     private void SetTopmost(bool on)
     {
@@ -397,6 +711,7 @@ internal sealed class ClockWindow : Window
     {
         _face.Build(on);
         _face.Pinned = Topmost;
+        RestoreAlarmDisplay();
         _face.SetTimeInstant(DateTime.Now);
         ApplyScale();
         KeepVisible();
@@ -410,6 +725,7 @@ internal sealed class ClockWindow : Window
         Look.T = theme;
         _face.Build(_face.Seconds);
         _face.Pinned = Topmost;
+        RestoreAlarmDisplay();
         _face.SetTimeInstant(DateTime.Now);
         _miBlack.IsChecked = theme == Theme.Black;
         _miWhite.IsChecked = theme == Theme.White;
@@ -479,13 +795,18 @@ internal sealed class ClockWindow : Window
             _miAutostart.IsChecked = AutostartOn();
         };
 
-        var sound = new MenuItem { Header = "Flap sound", IsChecked = FlapSound.Enabled };
-        sound.Click += (_, _) =>
-        {
-            FlapClips.Enable(!FlapSound.Enabled);
-            sound.IsChecked = FlapSound.Enabled;
-            SaveState();
-        };
+        _miSoundFlip = new MenuItem { Header = "Flap sound: every flip" };
+        _miSoundFlip.Click += (_, _) => SetSoundMode("flip");
+        _miSoundHour = new MenuItem { Header = "Flap sound: on the hour" };
+        _miSoundHour.Click += (_, _) => SetSoundMode("hour");
+        _miSoundOff = new MenuItem { Header = "Flap sound: off" };
+        _miSoundOff.Click += (_, _) => SetSoundMode("off");
+        ShowSoundMode();
+
+        _miAlarm = new MenuItem { Header = "Alarm", IsChecked = _s.AlarmOn };
+        _miAlarm.Click += (_, _) => SetAlarmOn(!_s.AlarmOn);
+        var setAlarm = new MenuItem { Header = "Set alarm time" };
+        setAlarm.Click += (_, _) => EnterSetMode();
 
         _miBlack = new MenuItem { Header = "Black", IsChecked = Look.T == Theme.Black };
         _miBlack.Click += (_, _) => SetStyle(Theme.Black);
@@ -505,7 +826,13 @@ internal sealed class ClockWindow : Window
         var menu = new ContextMenu();
         menu.Items.Add(_miTop);
         menu.Items.Add(_miSeconds);
-        menu.Items.Add(sound);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(_miSoundFlip);
+        menu.Items.Add(_miSoundHour);
+        menu.Items.Add(_miSoundOff);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(_miAlarm);
+        menu.Items.Add(setAlarm);
         menu.Items.Add(new Separator());
         menu.Items.Add(_miBlack);
         menu.Items.Add(_miWhite);
@@ -514,7 +841,12 @@ internal sealed class ClockWindow : Window
         menu.Items.Add(reset);
         menu.Items.Add(new Separator());
         menu.Items.Add(close);
-        menu.Opened += (_, _) => _miAutostart.IsChecked = AutostartOn();
+        menu.Opened += (_, _) =>
+        {
+            _miAutostart.IsChecked = AutostartOn();
+            _miAlarm.Header = $"Alarm at {_s.AlarmHour:00}:{_s.AlarmMinute:00}";
+            _miAlarm.IsChecked = _s.AlarmOn;
+        };
         return menu;
     }
 }

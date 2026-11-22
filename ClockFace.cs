@@ -113,6 +113,117 @@ internal sealed class PinButton : FrameworkElement
     }
 }
 
+/// <summary>The bell in the header: dim when the alarm is off, amber when it is set, glowing while it rings or is being set.</summary>
+internal sealed class BellButton : FrameworkElement
+{
+    public const double Box = 26;
+
+    // Bell outline after the Lucide "bell" icon (ISC licence), 24 x 24 grid.
+    private static readonly Geometry Icon = Geometry.Parse(
+        "M10.268,21 a2,2 0 0 0 3.464,0 M3.262,15.326 A1,1 0 0 0 4,17 h16 a1,1 0 0 0 0.74,-1.673 " +
+        "C19.41,13.956 18,12.499 18,8 A6,6 0 0 0 6,8 c0,4.499 -1.411,5.956 -2.738,7.326");
+
+    private bool _armed, _lit, _hover;
+
+    public BellButton()
+    {
+        Width = Height = Box;
+        Cursor = System.Windows.Input.Cursors.Hand;
+    }
+
+    public bool Armed { get => _armed; set { _armed = value; InvalidateVisual(); } }
+    public bool Lit { get => _lit; set { if (_lit != value) { _lit = value; InvalidateVisual(); } } }
+    public bool Hover { get => _hover; set { if (_hover != value) { _hover = value; InvalidateVisual(); } } }
+
+    protected override void OnRender(DrawingContext dc)
+    {
+        var t = Look.T;
+        dc.DrawRectangle(Brushes.Transparent, null, new Rect(0, 0, Box, Box)); // click area
+        double c = Box / 2;
+        bool red = Look.AlarmFlash; // ringing: red with the digits
+        if (red) dc.DrawEllipse(Look.AlarmGlow, null, new Point(c, c), 16, 16);
+        else if (_lit) dc.DrawEllipse(t.PinGlow, null, new Point(c, c), 15, 15);
+
+        const double k = 0.6;
+        bool on = _armed || _lit;
+        dc.PushTransform(new TranslateTransform(c, c));
+        dc.PushTransform(new ScaleTransform(k, k));
+        dc.PushTransform(new TranslateTransform(-12, -12));
+        if (red) dc.DrawGeometry(Look.AlarmFill, Look.AlarmPen, Icon);
+        else dc.DrawGeometry(on ? t.PinOnFill : null, on ? t.PinOn : _hover ? t.PinOffHover : t.PinOff, Icon);
+        dc.Pop(); dc.Pop(); dc.Pop();
+    }
+}
+
+/// <summary>A small labelled button in the header, shown while the alarm time is being set.</summary>
+internal sealed class HeaderButton : FrameworkElement
+{
+    public const double H = 20;
+    private readonly string _text;
+    private readonly bool _primary;
+    private bool _hover;
+
+    public HeaderButton(string text, double width, bool primary)
+    {
+        _text = text;
+        _primary = primary;
+        Width = width;
+        Height = H;
+        Cursor = System.Windows.Input.Cursors.Hand;
+    }
+
+    public bool Hover { get => _hover; set { if (_hover != value) { _hover = value; InvalidateVisual(); } } }
+
+    protected override void OnRender(DrawingContext dc)
+    {
+        var t = Look.T;
+        var box = new Rect(0.5, 0.5, Width - 1, H - 1);
+        Brush ink;
+        if (_primary)
+        {
+            // the one to press: filled amber, dark lettering
+            dc.DrawRoundedRectangle(t.Weekday, null, box, 5, 5);
+            if (_hover) dc.DrawRoundedRectangle(Look.Solid(Color.FromArgb(0x38, 0xFF, 0xFF, 0xFF)), null, box, 5, 5);
+            ink = Look.Solid(Color.FromRgb(0x16, 0x14, 0x10));
+        }
+        else
+        {
+            var line = _hover ? t.PinOffHover.Brush : t.PinOff.Brush;
+            dc.DrawRoundedRectangle(Brushes.Transparent, new Pen(line, 1), box, 5, 5);
+            ink = _hover ? t.PinOffHover.Brush : t.Date;
+        }
+
+        var ft = new FormattedText(_text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+            Look.LabelFace, 10.5, ink, 1.0);
+        var g = ft.BuildGeometry(new Point(0, 0));
+        var b = g.Bounds;
+        dc.PushTransform(new TranslateTransform((Width - b.Width) / 2 - b.X, (H - b.Height) / 2 - b.Y));
+        dc.DrawGeometry(ink, null, g);
+        dc.Pop();
+    }
+}
+
+/// <summary>A small arrow above or below a card: "click here to go up / down". Shown while setting the alarm.</summary>
+internal sealed class SetArrow : FrameworkElement
+{
+    private readonly bool _up;
+
+    public SetArrow(bool up)
+    {
+        _up = up;
+        Width = 14;
+        Height = 8;
+        IsHitTestVisible = false;
+    }
+
+    protected override void OnRender(DrawingContext dc)
+    {
+        var pen = Look.T.PinOn; // amber, round ends
+        if (_up) { dc.DrawLine(pen, new Point(1, 7), new Point(7, 1)); dc.DrawLine(pen, new Point(7, 1), new Point(13, 7)); }
+        else { dc.DrawLine(pen, new Point(1, 1), new Point(7, 7)); dc.DrawLine(pen, new Point(7, 7), new Point(13, 1)); }
+    }
+}
+
 /// <summary>Six dots in the lower right corner: the handle for scaling. Shown while the mouse is over the clock.</summary>
 internal sealed class Grip : FrameworkElement
 {
@@ -203,10 +314,16 @@ internal sealed class ClockFace : Canvas
     private static readonly CultureInfo En = CultureInfo.GetCultureInfo("en-US");
 
     private readonly List<FlapModule> _digits = new();
-    private SpacedText _weekday = null!, _date = null!;
+    private SpacedText _weekday = null!, _date = null!, _alarmLabel = null!;
     private PinButton _pin = null!;
+    private BellButton _bell = null!;
     private Grip _grip = null!;
-    private bool _started, _pinned;
+    private readonly List<Rect> _digitRects = new();
+    private readonly List<ColonModule> _colons = new();
+    private readonly List<FrameworkElement> _setOnly = new(); // shown only while the alarm is being set
+    private HeaderButton _done = null!, _cancel = null!;
+    private bool _started, _pinned, _alarmOn, _setMode;
+    private string _alarmText = "";
 
     public ClockFace(bool seconds) => Build(seconds);
 
@@ -237,8 +354,14 @@ internal sealed class ClockFace : Canvas
         var theme = Look.T;
         _weekday = new SpacedText(12.5, 2.6, theme.Weekday);
         _date = new SpacedText(12.5, 2.6, theme.Date);
+        _alarmLabel = new SpacedText(12.5, 2.2, theme.Weekday);
         _pin = new PinButton { On = _pinned };
+        _bell = new BellButton { Armed = _alarmOn };
         _grip = new Grip();
+        _digitRects.Clear();
+        _colons.Clear();
+        _setOnly.Clear();
+        _setMode = false;
 
         int n = seconds ? 6 : 4, colons = seconds ? 2 : 1;
         double rowW = n * Look.ModW + colons * Look.ColonW + (n + colons - 1) * Gap;
@@ -276,12 +399,22 @@ internal sealed class ClockFace : Canvas
         SetLeft(_pin, PinRect.X);
         SetTop(_pin, PinRect.Y);
 
+        // the alarm bell sits left of the pin, the alarm time left of the bell
+        Children.Add(_bell);
+        BellRect = new Rect(PinRect.X - BellButton.Box + 2, PinRect.Y, BellButton.Box, BellButton.Box);
+        SetLeft(_bell, BellRect.X);
+        SetTop(_bell, BellRect.Y);
+        Children.Add(_alarmLabel);
+        SetTop(_alarmLabel, headMid - _alarmLabel.CapHeight / 2);
+        PlaceAlarmLabel();
+
         double x = M + Pad, y = M + HeadH;
         for (int i = 0; i < n; i++)
         {
             if (i > 0 && i % 2 == 0)
             {
                 var colon = new ColonModule();
+                _colons.Add(colon);
                 Children.Add(colon);
                 SetLeft(colon, x);
                 SetTop(colon, y);
@@ -292,12 +425,37 @@ internal sealed class ClockFace : Canvas
             SetLeft(m, x);
             SetTop(m, y);
             _digits.Add(m);
+            _digitRects.Add(new Rect(x, y, Look.ModW, Look.ModH));
             x += Look.ModW + Gap;
+        }
+
+        // Shown only while the alarm time is being set: Done and Cancel where bell and pin normally are,
+        // and an up and a down arrow on each of the four cards of the alarm time.
+        _done = new HeaderButton("DONE", 50, primary: true);
+        _cancel = new HeaderButton("CANCEL", 62, primary: false);
+        DoneRect = new Rect(M + hw - Pad - _done.Width, headMid - HeaderButton.H / 2, _done.Width, HeaderButton.H);
+        CancelRect = new Rect(DoneRect.X - 8 - _cancel.Width, DoneRect.Y, _cancel.Width, HeaderButton.H);
+        Place(_done, DoneRect.X, DoneRect.Y);
+        Place(_cancel, CancelRect.X, CancelRect.Y);
+        for (int i = 0; i < 4 && i < _digitRects.Count; i++)
+        {
+            var r = _digitRects[i];
+            Place(new SetArrow(up: true), r.X + r.Width / 2 - 7, r.Y + 8);
+            Place(new SetArrow(up: false), r.X + r.Width / 2 - 7, r.Bottom - 16);
         }
 
         Children.Add(_grip);
         SetLeft(_grip, M + hw - Grip.Box - 5.5);
         SetTop(_grip, M + hh - Grip.Box - 5.5);
+
+        void Place(FrameworkElement el, double left, double top)
+        {
+            el.Visibility = Visibility.Hidden;
+            _setOnly.Add(el);
+            Children.Add(el);
+            SetLeft(el, left);
+            SetTop(el, top);
+        }
     }
 
     private static readonly Dictionary<bool, ImageSource> ShadowCache = new();
@@ -346,11 +504,96 @@ internal sealed class ClockFace : Canvas
 
     private void PlaceDate() => SetLeft(_date, M + Pad + 1 + _weekday.TextWidth + 13);
 
+    private void PlaceAlarmLabel()
+    {
+        _alarmLabel.Text = _alarmOn && !_setMode ? _alarmText : "";
+        SetLeft(_alarmLabel, BellRect.X - 2 - _alarmLabel.TextWidth);
+    }
+
     private void SetHeader(DateTime now)
     {
-        _weekday.Text = now.ToString("dddd", En).ToUpperInvariant();
-        _date.Text = now.ToString("dd MMM", En).ToUpperInvariant();
+        if (_setMode)
+        {
+            _weekday.Text = "SET ALARM";
+            _date.Text = "";
+        }
+        else
+        {
+            _weekday.Text = now.ToString("dddd", En).ToUpperInvariant();
+            _date.Text = now.ToString("dd MMM", En).ToUpperInvariant();
+        }
         PlaceDate();
+    }
+
+    // ---------- alarm ----------
+
+    public Rect BellRect { get; private set; }
+
+    /// <summary>Where digit number <paramref name="i"/> sits (0 and 1 are the hours, 2 and 3 the minutes).</summary>
+    public Rect DigitRect(int i) => i >= 0 && i < _digitRects.Count ? _digitRects[i] : Rect.Empty;
+
+    /// <summary>Show whether the alarm is set, and for what time (shown next to the bell).</summary>
+    public void SetAlarm(bool on, int hour, int minute)
+    {
+        _alarmOn = on;
+        _alarmText = $"{hour:00}:{minute:00}";
+        _bell.Armed = on;
+        _bell.ToolTip = on ? $"Alarm at {_alarmText}. Click to switch it off." : "Alarm off. Click to set it.";
+        PlaceAlarmLabel();
+    }
+
+    public Rect DoneRect { get; private set; }
+    public Rect CancelRect { get; private set; }
+
+    public void SetBellHover(bool over) => _bell.Hover = over;
+
+    public void SetSetButtonsHover(bool done, bool cancel)
+    {
+        _done.Hover = done;
+        _cancel.Hover = cancel;
+    }
+
+    /// <summary>
+    /// The alarm rings: digits, dots and bell turn red for the flash (<paramref name="red"/> true)
+    /// and back to normal between flashes.
+    /// </summary>
+    public void SetAlarmFlash(bool red)
+    {
+        if (Look.AlarmFlash == red) return;
+        Look.AlarmFlash = red;
+        foreach (var d in _digits) d.Repaint();
+        foreach (var c in _colons) c.Repaint();
+        _bell.InvalidateVisual();
+    }
+
+    /// <summary>
+    /// Switch between showing the time and showing the alarm time for setting.
+    /// While setting, Done and Cancel take the place of bell and pin, and the cards get arrows.
+    /// </summary>
+    public void SetSetMode(bool on)
+    {
+        _setMode = on;
+        SetHeader(DateTime.Now);
+        PlaceAlarmLabel();
+        var normal = on ? Visibility.Hidden : Visibility.Visible;
+        _bell.Visibility = normal;
+        _pin.Visibility = normal;
+        foreach (var el in _setOnly) el.Visibility = on ? Visibility.Visible : Visibility.Hidden;
+    }
+
+    /// <summary>
+    /// While setting: put the alarm time on the cards. Going up, the cards turn like on the real thing;
+    /// going down they change at once, because a flap display can only turn forward.
+    /// </summary>
+    public void ShowAlarmDigits(int hour, int minute, bool turn)
+    {
+        _started = true;
+        string t = $"{hour:00}{minute:00}";
+        for (int i = 0; i < _digits.Count; i++)
+        {
+            char c = i < 4 ? t[i] : ' ';
+            if (turn && i < 4) _digits[i].SetTarget(c); else _digits[i].SetInstant(c);
+        }
     }
 
     /// <summary>Show a time. The first call after a build runs the board-style start-up shuffle.</summary>

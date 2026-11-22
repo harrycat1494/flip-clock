@@ -125,11 +125,7 @@ namespace FlipClock
         public static bool Enabled
         {
             get { return _enabled; }
-            set
-            {
-                _enabled = value;
-                if (!value) { lock (Gate) Voices.Clear(); }
-            }
+            set { _enabled = value; } // clacks already ordered simply finish; new ones are not ordered
         }
 
         /// <summary>True while the sound stream is running and a clack can be placed exactly.</summary>
@@ -159,7 +155,34 @@ namespace FlipClock
         public static void Warm()
         {
             if (!_enabled) return;
+            WarmAlways();
+        }
+
+        /// <summary>Wake the stream even if the flap sound is switched off (the alarm needs it).</summary>
+        public static void WarmAlways()
+        {
             lock (Gate) { _warm = true; EnsureThread(); }
+            Wake.Set();
+        }
+
+        /// <summary>
+        /// Play any sound in <paramref name="delayMs"/> milliseconds, whether or not the flap sound is on.
+        /// Used for the alarm beep.
+        /// </summary>
+        public static void Play(short[] sound, double delayMs, float gain)
+        {
+            if (sound == null || sound.Length == 0) return;
+            lock (Gate)
+            {
+                if (Voices.Count >= MaxVoices) return;
+                Voice v = new Voice();
+                v.Data = sound;
+                v.Anchor = 0;
+                v.DueTicks = Clock.ElapsedTicks + (long)(delayMs * Stopwatch.Frequency / 1000.0);
+                v.Gain = gain;
+                Voices.Add(v);
+                EnsureThread();
+            }
             Wake.Set();
         }
 
@@ -227,7 +250,7 @@ namespace FlipClock
 
             if (_client == null)
             {
-                if (!wanted || !_enabled) return;
+                if (!wanted) return;
                 OpenDevice();
             }
 

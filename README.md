@@ -9,11 +9,12 @@ A small split-flap clock for the Windows desktop, in the style of the old airpor
 ## What it does
 
 - Shows the time on flap cards that really turn, one card at a time, like the mechanical boards did.
-- **Move it:** drag the clock anywhere on the screen.
+- **Move it:** drag the clock anywhere on the screen. Near the middle of the screen it catches, left-right and up-down separately, so it is easy to centre. Hold Ctrl while dragging to place it freely.
 - **Scale it:** drag an edge or a corner. It is drawn as vector shapes, so it stays sharp at any size.
 - **Always on top:** click the pin in the top right corner. Amber means on.
 - **Black or white**, with or without seconds: right-click the clock.
-- **Flap sound:** every card lands with the clack of a real split-flap display, timed to the card. Right-click the clock and untick "Flap sound" to switch it off.
+- **Flap sound:** every card lands with the clack of a real split-flap display, timed to the card. Right-click the clock to choose: every flip, only on the full hour (a short rattle once an hour), or off.
+- **Alarm:** click the bell. The cards show the alarm time; click the upper or lower half of a card (or scroll over it) to change it, then click the bell again. The bell turns amber and the alarm time stands next to it. At that time the clock beeps like an old digital alarm clock, every day, until you click it (it gives up after a minute). Click the amber bell to switch the alarm off.
 - **Start with Windows:** right-click the clock and tick it.
 - It remembers where you put it, how big it is and how you set it.
 
@@ -47,6 +48,10 @@ What the program does on your PC, in full:
 - With the flap sound on, it plays through your normal sound output, like any other program. It records nothing.
 - It saves its settings in one small file: `%APPDATA%\FlipClock\settings.json`.
 - Only if you tick "Start with Windows", it adds one entry to your own user's start-up list (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`). Untick it and the entry is gone.
+
+### What the alarm cannot do
+
+It rings only while the PC is awake, the clock is running and the sound is not muted. It does not wake a sleeping PC, and an alarm time that passes while the PC sleeps is not made up for. Use it as a desk reminder, not to get out of bed.
 
 ## Light on the PC
 
@@ -84,7 +89,7 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 
 MIT licence, see [LICENSE](LICENSE). Do what you like with it.
 
-- The pin icon is from [Lucide](https://lucide.dev) (ISC licence).
+- The pin and bell icons are from [Lucide](https://lucide.dev) (ISC licence).
 - The flap sound is cut from the recording ["Split Flap Display" by ngruber](https://freesound.org/people/ngruber/sounds/261244/) (CC0).
 - The digits use Bahnschrift, a typeface that comes with Windows. It is not included here.
 - The all-in-one version contains Microsoft's .NET runtime (MIT licence).

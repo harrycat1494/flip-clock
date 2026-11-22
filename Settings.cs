@@ -15,6 +15,13 @@ internal sealed class Settings
     public bool Seconds { get; set; }
     public bool Sound { get; set; } = true;
 
+    /// <summary>"flip" (every card), "hour" (only at the full hour) or "off". Missing in files from before 1.2.</summary>
+    public string? SoundMode { get; set; }
+
+    public bool AlarmOn { get; set; }
+    public int AlarmHour { get; set; } = 7;
+    public int AlarmMinute { get; set; }
+
     /// <summary>"black" or "white".</summary>
     public string Style { get; set; } = "black";
 
@@ -31,6 +38,9 @@ internal sealed class Settings
                 if (s != null)
                 {
                     if (double.IsNaN(s.Scale) || s.Scale < 0.2 || s.Scale > 6) s.Scale = DefaultScale;
+                    s.SoundMode ??= s.Sound ? "flip" : "off"; // settings from 1.1 only had on/off
+                    s.AlarmHour = Math.Clamp(s.AlarmHour, 0, 23);
+                    s.AlarmMinute = Math.Clamp(s.AlarmMinute, 0, 59);
                     return s;
                 }
             }

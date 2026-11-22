@@ -18,6 +18,26 @@ internal static class Native
     public const uint SWP_NOZORDER = 0x0004;
     public const uint SWP_NOACTIVATE = 0x0010;
     public const int WM_WINDOWPOSCHANGED = 0x0047;
+    public const int WM_MOVING = 0x0216;
+    public const int VK_CONTROL = 0x11;
+    public const uint MONITOR_DEFAULTTONEAREST = 2;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MONITORINFO
+    {
+        public int cbSize;
+        public RECT rcMonitor, rcWork;
+        public uint dwFlags;
+    }
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr MonitorFromRect(ref RECT r, uint flags);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
+
+    [DllImport("user32.dll")]
+    public static extern short GetKeyState(int key);
     public static readonly IntPtr HWND_TOPMOST = new(-1);
 
     [DllImport("user32.dll")]

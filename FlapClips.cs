@@ -6,11 +6,20 @@ namespace FlipClock;
 /// </summary>
 internal static class FlapClips
 {
-    /// <summary>Switch the flap sound on or off. The clacks are only loaded the first time it is switched on.</summary>
+    private static int _loading;
+
+    /// <summary>Switch the flap sound on or off. The clacks are only loaded the first time they are needed.</summary>
     public static void Enable(bool on)
     {
         FlapSound.Enabled = on;
-        if (on && !FlapSound.HasClips) Task.Run(Load); // off the screen thread: no stutter
+        if (on) Prepare();
+    }
+
+    /// <summary>Load the clacks now (once), without switching the sound on.</summary>
+    public static void Prepare()
+    {
+        if (FlapSound.HasClips || Interlocked.Exchange(ref _loading, 1) == 1) return;
+        Task.Run(Load); // off the screen thread: no stutter
     }
 
     private static void Load()
