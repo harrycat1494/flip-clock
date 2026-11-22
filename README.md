@@ -61,7 +61,9 @@ Windows does not let a program replace its own clock. So Flip Clock lies on top 
 
 ![The small form of the clock: only the cards](post/07-compact.png)
 
-![Flip Clock lying on the Windows taskbar, next to the network, sound and battery icons](post/08-on-the-taskbar.png)
+![Flip Clock lying on the taskbar, next to the network, sound and battery icons](post/08-on-the-taskbar.png)
+
+*The clock in this picture is a real screenshot, taken at four times its taskbar size so that it stays sharp. The taskbar around it is redrawn in the real colours and proportions.*
 
 - It needs "Always on top", and switches it on. If you untick "Always on top" while the clock lies on the taskbar, it first goes back to where it was, because the taskbar would cover it.
 - The small clock has no bell. To set the alarm, right-click it and choose "Set alarm time": the clock grows for setting and shrinks back afterwards.
