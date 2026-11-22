@@ -85,6 +85,10 @@ All-in-one version:
 dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o portable
 ```
 
+## Say thanks
+
+Flip Clock is free and stays free: no ads, no paid version, nothing locked. If you enjoy it and want to say thanks, you can [leave a tip via PayPal](https://www.paypal.com/donate/?hosted_button_id=BAREZFVCRGNUA). Entirely optional.
+
 ## Licence and credits
 
 MIT licence, see [LICENSE](LICENSE). Do what you like with it.
