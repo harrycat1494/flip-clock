@@ -19,6 +19,11 @@ A small split-flap clock for the Windows desktop, in the style of the old airpor
 - **Start with Windows:** right-click the clock and tick it.
 - It remembers where you put it, how big it is and how you set it.
 
+<p>
+  <img src="post/05-alarm-set.png" alt="Setting the alarm: the cards show the alarm time, with arrows, Cancel and Done" width="49%">
+  <img src="post/06-alarm-ringing.png" alt="The alarm ringing: digits and bell flash red" width="49%">
+</p>
+
 ## Download
 
 Get it from the [Releases page](../../releases/latest). Two downloads do the same thing. Pick one.
@@ -53,6 +58,10 @@ What the program does on your PC, in full:
 ### On the taskbar
 
 Windows does not let a program replace its own clock. So Flip Clock lies on top of it: "Put on the taskbar" makes the clock small and puts it at the right end of the taskbar on the screen it is on. You can also drag a small clock there yourself.
+
+![The small form of the clock: only the cards](post/07-compact.png)
+
+![Flip Clock lying on the Windows taskbar, next to the network, sound and battery icons](post/08-on-the-taskbar.png)
 
 - It needs "Always on top", and switches it on. If you untick "Always on top" while the clock lies on the taskbar, it first goes back to where it was, because the taskbar would cover it.
 - The small clock has no bell. To set the alarm, right-click it and choose "Set alarm time": the clock grows for setting and shrinks back afterwards.
