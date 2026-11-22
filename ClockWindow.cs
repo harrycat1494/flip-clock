@@ -14,7 +14,14 @@ namespace FlipClock;
 /// </summary>
 internal sealed class ClockWindow : Window
 {
-    private const double MinScale = 0.3, MaxScale = 5;
+    private const double MinScale = 0.2, MaxScale = 5;
+
+    // Below this size the date line, bell and pin are too small to read: the clock becomes "compact"
+    // (cards only). It turns back into the full clock when it is made clearly bigger again.
+    private const double CompactBelow = 0.34, FullAbove = 0.42;
+    private (double scale, double left, double top)? _compactReturn;
+    private readonly DispatcherTimer _guardTimer = new(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(2) };
+    private bool _hiddenForFullScreen;
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string RunName = "FlipClock";
 
@@ -30,6 +37,7 @@ internal sealed class ClockWindow : Window
     private readonly DispatcherTimer _setIdle = new() { Interval = TimeSpan.FromSeconds(30) };
     private readonly DispatcherTimer _flashOff = new() { Interval = TimeSpan.FromMilliseconds(500) };
     private int _prevHour, _prevMinute;
+    private MenuItem _miTaskbar = null!;
     private MenuItem _miTop = null!, _miSeconds = null!, _miAutostart = null!, _miBlack = null!, _miWhite = null!, _miAlarm = null!;
     private bool _setting, _ringing;
     private int _ringLeft;
@@ -58,7 +66,9 @@ internal sealed class ClockWindow : Window
         Look.T = _s.Style == "white" ? Theme.White : Theme.Black;
         _soundMode = _s.SoundMode is "off" or "hour" ? _s.SoundMode : "flip";
         ApplySoundMode();
-        _face = new ClockFace(_s.Seconds) { Pinned = _s.Topmost };
+        _face = new ClockFace(_s.Seconds, _s.Compact) { Pinned = _s.Topmost };
+        _guardTimer.Tick += (_, _) => GuardTopmost();
+        if (_s.Topmost) _guardTimer.Start();
         _face.SetAlarm(_s.AlarmOn, _s.AlarmHour, _s.AlarmMinute);
         Content = new Viewbox { Child = _face, Stretch = Stretch.Uniform };
 
@@ -113,20 +123,52 @@ internal sealed class ClockWindow : Window
             wait.Start();
         };
         _timer.Tick += (_, _) => Tick();
-        Closing += (_, _) => SaveState();
-        SystemEvents.DisplaySettingsChanged += (_, _) => Dispatcher.BeginInvoke(KeepVisible);
+        Closing += (_, _) =>
+        {
+            SaveState();
+            // Somebody closes the window (Alt+F4, or Windows asking politely): that ends the clock.
+            // Only when the clock itself opens its window afresh, or when Windows removes the window
+            // without asking (then this is never reached), does App open a new one.
+            if (!_reopening) App.Quitting = true;
+        };
+        _onDisplay = (_, _) => Dispatcher.BeginInvoke(KeepVisible);
         // after standby, or when Windows corrects the time, show the right time at once
-        SystemEvents.TimeChanged += (_, _) => Dispatcher.BeginInvoke(Tick);
-        SystemEvents.PowerModeChanged += (_, e) =>
+        _onTime = (_, _) => Dispatcher.BeginInvoke(Tick);
+        _onPower = (_, e) =>
         {
             if (e.Mode == PowerModes.Resume) Dispatcher.BeginInvoke(Tick);
         };
+        SystemEvents.DisplaySettingsChanged += _onDisplay;
+        SystemEvents.TimeChanged += _onTime;
+        SystemEvents.PowerModeChanged += _onPower;
+    }
+
+    private readonly EventHandler _onDisplay, _onTime;
+    private readonly PowerModeChangedEventHandler _onPower;
+    private bool _closed, _reopening, _wasAnchored;
+
+    /// <summary>
+    /// The window is gone (the clock is closing, or it is being opened afresh, see UpdateTaskbarAnchor):
+    /// stop everything that would otherwise keep ticking for a window that no longer exists.
+    /// </summary>
+    protected override void OnClosed(EventArgs e)
+    {
+        _closed = true;
+        _hwnd = IntPtr.Zero;
+        foreach (var t in new[] { _timer, _guardTimer, _warmTimer, _alarmWarmTimer, _ringTimer, _flashOff, _setIdle, _hourOff })
+            t.Stop();
+        _taskbarWatch?.Stop();
+        SystemEvents.DisplaySettingsChanged -= _onDisplay;
+        SystemEvents.TimeChanged -= _onTime;
+        SystemEvents.PowerModeChanged -= _onPower;
+        base.OnClosed(e);
     }
 
     // ---------- time ----------
 
     private void Tick()
     {
+        if (_closed) return;
         var now = DateTime.Now;
         FlapModule.FrameRate = _face.Seconds ? 30 : 60;
         if (_soundMode == "hour")
@@ -218,6 +260,7 @@ internal sealed class ClockWindow : Window
         _ringTimer.Stop();
         _flashOff.Stop();
         _face.SetAlarmFlash(false);
+        UpdateTaskbarAnchor(); // anything held back while it rang
     }
 
     /// <summary>Show the alarm time on the cards so it can be changed.</summary>
@@ -230,11 +273,31 @@ internal sealed class ClockWindow : Window
             _prevHour = _s.AlarmHour;
             _prevMinute = _s.AlarmMinute;
         }
+        if (_face.Compact)
+        {
+            // The compact clock has no room for buttons and arrows: grow to the full form for setting,
+            // and go back to exactly the same small clock afterwards.
+            _compactReturn = (_scale, Left, Top);
+            _scale = Math.Max(_scale, 0.7);
+            SwitchLayout(compact: false);
+            FitOnScreen();
+        }
         _setting = true;
         _face.SetSetMode(true);
         _face.ShowAlarmDigits(_s.AlarmHour, _s.AlarmMinute, turn: true);
         _setIdle.Stop();
         _setIdle.Start();
+    }
+
+    /// <summary>After setting the alarm: if the clock was compact before, make it compact again, same size and place.</summary>
+    private void LeaveSetLayout()
+    {
+        if (_compactReturn is not { } back) return;
+        _compactReturn = null;
+        _scale = back.scale;
+        SwitchLayout(compact: true);
+        Left = back.left;
+        Top = back.top;
     }
 
     /// <summary>Back to the clock, alarm as it was before.</summary>
@@ -246,8 +309,10 @@ internal sealed class ClockWindow : Window
         _s.AlarmHour = _prevHour;
         _s.AlarmMinute = _prevMinute;
         _face.SetSetMode(false);
+        LeaveSetLayout();
         _face.SetAlarm(_s.AlarmOn, _s.AlarmHour, _s.AlarmMinute);
         Tick();
+        UpdateTaskbarAnchor();
     }
 
     /// <summary>Done setting: the alarm is on, the cards turn back to the time.</summary>
@@ -258,9 +323,11 @@ internal sealed class ClockWindow : Window
         _setting = false;
         _s.AlarmOn = true;
         _face.SetSetMode(false);
+        LeaveSetLayout();
         _face.SetAlarm(true, _s.AlarmHour, _s.AlarmMinute);
         SaveState();
         Tick();
+        UpdateTaskbarAnchor();
     }
 
     private void SetAlarmOn(bool on)
@@ -270,6 +337,7 @@ internal sealed class ClockWindow : Window
             _setIdle.Stop();
             _setting = false;
             _face.SetSetMode(false);
+            LeaveSetLayout();
         }
         if (!on && _ringing) StopRinging();
         _s.AlarmOn = on;
@@ -380,6 +448,7 @@ internal sealed class ClockWindow : Window
         _s.Scale = _scale;
         _s.Topmost = Topmost;
         _s.Seconds = _face.Seconds;
+        if (_compactReturn == null) _s.Compact = _face.Compact; // not while it is only enlarged for setting the alarm
         _s.SoundMode = _soundMode;
         _s.Sound = _soundMode != "off"; // read by versions before 1.2
         _s.Style = Look.T.Name;
@@ -395,6 +464,7 @@ internal sealed class ClockWindow : Window
         Native.SetWindowLongPtr(_hwnd, Native.GWL_EXSTYLE, new IntPtr(ex | Native.WS_EX_TOOLWINDOW));
 
         SharpenCache(); // now the real screen scaling is known
+        Dispatcher.BeginInvoke(UpdateTaskbarAnchor); // it may have been left lying on the taskbar
 
         // Windows can take "always on top" away from a window (for example when the desktop is shown).
         // Watch for that and take it back at once.
@@ -464,10 +534,229 @@ internal sealed class ClockWindow : Window
         _fixingTop = true;
         try
         {
-            Native.SetWindowPos(_hwnd, Native.HWND_TOPMOST, 0, 0, 0, 0,
-                Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
+            const uint keep = Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE;
+            // Only ever ask for "topmost". Never take the clock out of the topmost group, not even for a
+            // moment: Windows would take a window's owner out with it, and on the taskbar that owner is
+            // the taskbar itself.
+            Native.SetWindowPos(_hwnd, Native.HWND_TOPMOST, 0, 0, 0, 0, keep);
         }
         finally { _fixingTop = false; }
+    }
+
+    // ---------- sitting on the taskbar ----------
+
+    private IntPtr _anchoredTo = IntPtr.Zero;
+    private DispatcherTimer? _taskbarWatch;
+
+    /// <summary>
+    /// When the taskbar is clicked, Windows lifts it into a layer above every normal program, and a clock
+    /// lying on it would vanish until another window is clicked. The one thing Windows always keeps in front
+    /// of a window is a window "owned" by it. So while the clock lies on a taskbar (and always-on-top is on),
+    /// it is made that taskbar's owned window; as soon as it is moved away, it is released again.
+    /// </summary>
+    private void UpdateTaskbarAnchor()
+    {
+        if (_closed || _reopening || _hwnd == IntPtr.Zero) return;
+        IntPtr want = Topmost ? TaskbarUnderClock() : IntPtr.Zero;
+        _anchoredTo = want;
+
+        // Left the taskbar after having been attached to it. When Start or Task View opens, Windows lifts the
+        // taskbar into a layer above all normal programs and takes its attached windows along; the clock then
+        // stays in that layer (measured on Windows 11, build 26300), and a program cannot leave it by itself.
+        // That is what keeps it visible on the taskbar. Away from the taskbar it must be a normal window
+        // again, so the window is opened afresh. Not while the alarm rings or is being set: done right after.
+        if (want == IntPtr.Zero && _wasAnchored && !_ringing && !_setting)
+        {
+            _reopening = true;
+            _taskbarWatch?.Stop();
+            Dispatcher.BeginInvoke(Close); // App opens a new window with the saved place and size
+            return;
+        }
+        // Only while it lies on a taskbar: look three times a second whether the taskbar has pushed in front
+        // (Windows gives no signal for that), and come back. Anywhere else this watch does not run.
+        if (want != IntPtr.Zero)
+        {
+            if (_taskbarWatch == null)
+            {
+                _taskbarWatch = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(300) };
+                _taskbarWatch.Tick += (_, _) =>
+                {
+                    if (!_hiddenForFullScreen && CoveredAtCentre()) KeepOnTop();
+                };
+            }
+            _taskbarWatch.Start();
+        }
+        else _taskbarWatch?.Stop();
+
+        // Ask Windows who really owns the window, every time. Windows can refuse the request (seen while
+        // Task View was open), and then only what was asked for would be remembered, not what is true.
+        IntPtr real = Native.GetWindow(_hwnd, Native.GW_OWNER);
+        if (real == want) return;
+        if (want == IntPtr.Zero && real != _ownerWeSet) return; // an owner this clock did not set: not ours to remove
+        var helper = new WindowInteropHelper(this);
+        if (helper.Owner != want) helper.Owner = want; // through WPF, so that WPF does not put its own idea back
+        if (Native.GetWindow(_hwnd, Native.GW_OWNER) != want)
+            Native.SetWindowLongPtr(_hwnd, Native.GWLP_HWNDPARENT, want);
+        _ownerWeSet = want;
+        if (want != IntPtr.Zero && Native.GetWindow(_hwnd, Native.GW_OWNER) == want) _wasAnchored = true;
+        if (Topmost) KeepOnTop();
+    }
+
+    private IntPtr _ownerWeSet = IntPtr.Zero;
+
+    // ---------- "Put on the taskbar" in the menu ----------
+
+    private const double BarFill = 0.75; // share of the taskbar's thickness that the clock takes
+    private const double BarEdge = 16;   // distance from the end of the taskbar
+
+    private bool OnTaskbar => _hwnd != IntPtr.Zero && TaskbarUnderClock() != IntPtr.Zero;
+
+    /// <summary>
+    /// Make the clock small (cards only) and lay it on the taskbar of the screen it is on, at the end where
+    /// Windows shows its own clock. Where it was before is remembered for the way back.
+    /// </summary>
+    private void PutOnTaskbar()
+    {
+        if (_hwnd == IntPtr.Zero) return;
+        IntPtr bar = TaskbarOfMyScreen();
+        if (bar == IntPtr.Zero || !BarIsShowing(bar)) return; // no taskbar, or one that hides itself
+        if (_setting) CancelSet();
+
+        if (!OnTaskbar)
+        {
+            _s.BackLeft = Left;
+            _s.BackTop = Top;
+            _s.BackScale = _scale;
+            _s.BackCompact = _face.Compact;
+        }
+        PlaceOnBar(bar);
+        if (!Topmost) SetTopmost(true); // otherwise the taskbar would cover it at once
+        // The taskbar may be on a screen with another scaling: measure once more after the move.
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_closed) return;
+            PlaceOnBar(bar);
+            SaveState();
+            UpdateTaskbarAnchor();
+            TrimSoon(1500);
+        }, DispatcherPriority.Background);
+    }
+
+    private void PlaceOnBar(IntPtr bar)
+    {
+        if (!Native.GetWindowRect(bar, out var b)) return;
+        double dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
+        double l = b.Left / dpi, t = b.Top / dpi, r = b.Right / dpi, bottom = b.Bottom / dpi;
+        bool flat = r - l >= bottom - t; // the usual taskbar along the bottom (or top) edge
+        if (!_face.Compact) SwitchLayout(compact: true);
+        _scale = Math.Clamp(flat ? (bottom - t) * BarFill / _face.DesignH : (r - l) * 0.86 / _face.DesignW, MinScale, MaxScale);
+        ApplyScale();
+        if (flat)
+        {
+            Left = r - Width - BarEdge;
+            Top = (t + bottom) / 2 - Height / 2;
+        }
+        else
+        {
+            Left = (l + r) / 2 - Width / 2;
+            Top = bottom - Height - BarEdge;
+        }
+    }
+
+    /// <summary>Back to where the clock was before "Put on the taskbar"; if that is not known, the normal clock top right.</summary>
+    private void TakeOffTaskbar()
+    {
+        if (_setting) CancelSet();
+        bool compact = _s.BackCompact ?? false;
+        if (_face.Compact != compact) SwitchLayout(compact);
+        _scale = _s.BackScale is double s ? Math.Clamp(s, MinScale, MaxScale) : Settings.DefaultScale;
+        ApplyScale();
+        if (_s.BackLeft is double left && _s.BackTop is double top)
+        {
+            Left = left;
+            Top = top;
+            KeepVisible();
+        }
+        else
+        {
+            FitOnScreen(); // stay on the screen it is on
+            var info = new Native.MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<Native.MONITORINFO>() };
+            if (Native.GetWindowRect(_hwnd, out var c)
+                && Native.GetMonitorInfo(Native.MonitorFromRect(ref c, Native.MONITOR_DEFAULTTONEAREST), ref info))
+            {
+                double dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
+                Left = info.rcWork.Right / dpi - Width - 8;
+                Top = info.rcWork.Top / dpi + 8;
+            }
+        }
+        _s.BackLeft = _s.BackTop = _s.BackScale = null;
+        _s.BackCompact = null;
+        SaveState();
+        UpdateTaskbarAnchor();
+        TrimSoon(1500);
+    }
+
+    /// <summary>The taskbar on the screen the clock is on; if that screen has none, the main one.</summary>
+    private IntPtr TaskbarOfMyScreen()
+    {
+        if (!Native.GetWindowRect(_hwnd, out var c)) return IntPtr.Zero;
+        IntPtr mine = Native.MonitorFromRect(ref c, Native.MONITOR_DEFAULTTONEAREST);
+        IntPtr main = Native.FindWindowByClass("Shell_TrayWnd", IntPtr.Zero);
+        if (OnMine(main)) return main;
+        IntPtr other = IntPtr.Zero;
+        for (int i = 0; i < 8; i++)
+        {
+            other = Native.FindWindowEx(IntPtr.Zero, other, "Shell_SecondaryTrayWnd", IntPtr.Zero);
+            if (other == IntPtr.Zero) break;
+            if (OnMine(other)) return other;
+        }
+        return main;
+
+        bool OnMine(IntPtr bar) =>
+            bar != IntPtr.Zero && Native.GetWindowRect(bar, out var b)
+            && Native.MonitorFromRect(ref b, Native.MONITOR_DEFAULTTONEAREST) == mine;
+    }
+
+    /// <summary>False for a taskbar that is slid out of the screen (the "hide automatically" setting).</summary>
+    private static bool BarIsShowing(IntPtr bar)
+    {
+        if (!Native.GetWindowRect(bar, out var b)) return false;
+        var info = new Native.MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<Native.MONITORINFO>() };
+        if (!Native.GetMonitorInfo(Native.MonitorFromRect(ref b, Native.MONITOR_DEFAULTTONEAREST), ref info)) return false;
+        var m = info.rcMonitor;
+        const int slack = 4;
+        return b.Left >= m.Left - slack && b.Top >= m.Top - slack && b.Right <= m.Right + slack && b.Bottom <= m.Bottom + slack;
+    }
+
+    /// <summary>The taskbar (main or on a second screen) that the middle of the clock lies on, if any.</summary>
+    private IntPtr TaskbarUnderClock()
+    {
+        if (!Native.GetWindowRect(_hwnd, out var c)) return IntPtr.Zero;
+        int cx = (c.Left + c.Right) / 2, cy = (c.Top + c.Bottom) / 2;
+
+        IntPtr main = Native.FindWindowByClass("Shell_TrayWnd", IntPtr.Zero);
+        if (Contains(main)) return main;
+        IntPtr other = IntPtr.Zero;
+        for (int i = 0; i < 8; i++)
+        {
+            other = Native.FindWindowEx(IntPtr.Zero, other, "Shell_SecondaryTrayWnd", IntPtr.Zero);
+            if (other == IntPtr.Zero) break;
+            if (Contains(other)) return other;
+        }
+        return IntPtr.Zero;
+
+        bool Contains(IntPtr bar) =>
+            bar != IntPtr.Zero && Native.GetWindowRect(bar, out var b)
+            && cx >= b.Left && cx < b.Right && cy >= b.Top && cy < b.Bottom;
+    }
+
+    /// <summary>Is some other window in front of the middle of the clock?</summary>
+    private bool CoveredAtCentre()
+    {
+        if (!Native.GetWindowRect(_hwnd, out var r)) return false;
+        var p = new Native.POINT { X = (r.Left + r.Right) / 2, Y = (r.Top + r.Bottom) / 2 };
+        IntPtr top = Native.GetAncestor(Native.WindowFromPoint(p), Native.GA_ROOT);
+        return top != IntPtr.Zero && top != _hwnd;
     }
 
     public void BringToFront()
@@ -490,6 +779,9 @@ internal sealed class ClockWindow : Window
         var h = _face.Housing;
         double l = h.Left * k, t = h.Top * k, r = h.Right * k, b = h.Bottom * k;
         double edge = Math.Clamp(7 * k + 3, 6, 12), corner = Math.Clamp(16 * k + 4, 14, 26);
+        // a very small clock must keep a middle that can be grabbed for moving
+        edge = Math.Min(edge, (b - t) * 0.16);
+        corner = Math.Min(corner, (b - t) * 0.32);
 
         bool nearL = p.X < l + edge, nearR = p.X > r - edge, nearT = p.Y < t + edge, nearB = p.Y > b - edge;
         bool cornL = p.X < l + corner, cornR = p.X > r - corner, cornT = p.Y < t + corner, cornB = p.Y > b - corner;
@@ -569,6 +861,7 @@ internal sealed class ClockWindow : Window
 
         try { DragMove(); } catch (InvalidOperationException) { }
         SaveState();
+        UpdateTaskbarAnchor(); // dropped onto a taskbar, or taken off one
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
@@ -634,6 +927,9 @@ internal sealed class ClockWindow : Window
         _resizing = false;
         ReleaseMouseCapture();
         _scale = Math.Clamp(ActualWidth / _face.DesignW, MinScale, MaxScale);
+        // made very small: cards only. Made clearly bigger again: the full clock.
+        if (!_setting && !_face.Compact && _scale < CompactBelow) SwitchLayout(compact: true);
+        else if (!_setting && _face.Compact && _scale > FullAbove) SwitchLayout(compact: false);
         SharpenCache(); // while dragging the stored pictures are only stretched; now make them sharp again
         SaveState();
         TrimSoon(1500);
@@ -701,15 +997,99 @@ internal sealed class ClockWindow : Window
 
     private void SetTopmost(bool on)
     {
+        // On the taskbar the clock only shows while it is "always on top": the taskbar would cover it.
+        // So switching that off there first takes the clock back to where it was before.
+        if (!on && OnTaskbar) TakeOffTaskbar();
         Topmost = on;
         _face.Pinned = on;
         _miTop.IsChecked = on;
+        if (on) _guardTimer.Start();
+        else
+        {
+            _guardTimer.Stop();
+            ShowAfterFullScreen();
+        }
+        UpdateTaskbarAnchor();
         SaveState();
+    }
+
+    /// <summary>
+    /// Only while "always on top" is chosen, every two seconds:
+    /// - a full-screen program (film, game, presentation) is running: get out of its way;
+    /// - otherwise make sure the clock is really in front. The taskbar is itself "always on top"
+    ///   and pushes in front when it is clicked, which matters for a clock sitting on it.
+    /// </summary>
+    private void GuardTopmost()
+    {
+        if (!Topmost)
+        {
+            _guardTimer.Stop();
+            return;
+        }
+        bool fullScreen = Native.SHQueryUserNotificationState(out int state) == 0
+                          && state is Native.QUNS_BUSY or Native.QUNS_RUNNING_D3D_FULL_SCREEN or Native.QUNS_PRESENTATION_MODE;
+        // A clock dragged as big as its screen is itself what Windows calls a full-screen program.
+        // It must not hide from itself (it would never come back).
+        if (fullScreen && !_ringing && !CoversItsScreen())
+        {
+            if (!_hiddenForFullScreen)
+            {
+                _hiddenForFullScreen = true;
+                Opacity = 0; // fully see-through: clicks go through it too
+            }
+            return;
+        }
+        ShowAfterFullScreen();
+        UpdateTaskbarAnchor();
+        KeepOnTop();
+    }
+
+    private bool CoversItsScreen()
+    {
+        if (_hwnd == IntPtr.Zero || !Native.GetWindowRect(_hwnd, out var r)) return false;
+        var info = new Native.MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<Native.MONITORINFO>() };
+        if (!Native.GetMonitorInfo(Native.MonitorFromRect(ref r, Native.MONITOR_DEFAULTTONEAREST), ref info)) return false;
+        var m = info.rcMonitor;
+        return r.Left <= m.Left && r.Top <= m.Top && r.Right >= m.Right && r.Bottom >= m.Bottom;
+    }
+
+    private void ShowAfterFullScreen()
+    {
+        if (!_hiddenForFullScreen) return;
+        _hiddenForFullScreen = false;
+        Opacity = 1;
+    }
+
+    /// <summary>Change between the full clock and the compact one (cards only). The cards keep their size and their middle stays put.</summary>
+    private void SwitchLayout(bool compact)
+    {
+        double cx = Left + Width / 2, cy = Top + Height / 2;
+        _face.Build(_face.Seconds, compact);
+        _face.Pinned = Topmost;
+        _face.SetAlarm(_s.AlarmOn, _s.AlarmHour, _s.AlarmMinute);
+        _face.SetTimeInstant(DateTime.Now);
+        ApplyScale();
+        Left = cx - Width / 2;
+        Top = cy - Height / 2;
+    }
+
+    /// <summary>Move the window so that all of it is on the screen it is on (used when it grows for setting the alarm).</summary>
+    private void FitOnScreen()
+    {
+        if (_hwnd == IntPtr.Zero || !Native.GetWindowRect(_hwnd, out var r)) return;
+        var info = new Native.MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<Native.MONITORINFO>() };
+        if (!Native.GetMonitorInfo(Native.MonitorFromRect(ref r, Native.MONITOR_DEFAULTTONEAREST), ref info)) return;
+        double dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
+        double l = info.rcWork.Left / dpi, t = info.rcWork.Top / dpi, rr = info.rcWork.Right / dpi, b = info.rcWork.Bottom / dpi;
+        if (Left + Width > rr) Left = rr - Width;
+        if (Top + Height > b) Top = b - Height;
+        if (Left < l) Left = l;
+        if (Top < t) Top = t;
     }
 
     private void SetSeconds(bool on)
     {
-        _face.Build(on);
+        _face.Build(on, _face.Compact);
         _face.Pinned = Topmost;
         RestoreAlarmDisplay();
         _face.SetTimeInstant(DateTime.Now);
@@ -723,7 +1103,7 @@ internal sealed class ClockWindow : Window
     private void SetStyle(Theme theme)
     {
         Look.T = theme;
-        _face.Build(_face.Seconds);
+        _face.Build(_face.Seconds, _face.Compact);
         _face.Pinned = Topmost;
         RestoreAlarmDisplay();
         _face.SetTimeInstant(DateTime.Now);
@@ -735,9 +1115,12 @@ internal sealed class ClockWindow : Window
     private void ResetSize()
     {
         _scale = Settings.DefaultScale;
-        ApplyScale();
+        if (_face.Compact && !_setting) SwitchLayout(compact: false); // the normal size is the full clock
+        else ApplyScale();
+        FitOnScreen(); // it may have been lying on the taskbar
         KeepVisible();
         SaveState();
+        UpdateTaskbarAnchor();
     }
 
     private static bool AutostartOn()
@@ -813,6 +1196,13 @@ internal sealed class ClockWindow : Window
         _miWhite = new MenuItem { Header = "White", IsChecked = Look.T == Theme.White };
         _miWhite.Click += (_, _) => SetStyle(Theme.White);
 
+        _miTaskbar = new MenuItem { Header = "Put on the taskbar" };
+        _miTaskbar.Click += (_, _) =>
+        {
+            if (OnTaskbar) TakeOffTaskbar();
+            else PutOnTaskbar();
+        };
+
         var reset = new MenuItem { Header = "Reset size" };
         reset.Click += (_, _) => ResetSize();
 
@@ -820,11 +1210,13 @@ internal sealed class ClockWindow : Window
         close.Click += (_, _) =>
         {
             SaveState();
+            App.Quitting = true;
             Application.Current.Shutdown();
         };
 
         var menu = new ContextMenu();
         menu.Items.Add(_miTop);
+        menu.Items.Add(_miTaskbar);
         menu.Items.Add(_miSeconds);
         menu.Items.Add(new Separator());
         menu.Items.Add(_miSoundFlip);
@@ -844,6 +1236,7 @@ internal sealed class ClockWindow : Window
         menu.Opened += (_, _) =>
         {
             _miAutostart.IsChecked = AutostartOn();
+            _miTaskbar.IsChecked = OnTaskbar;
             _miAlarm.Header = $"Alarm at {_s.AlarmHour:00}:{_s.AlarmMinute:00}";
             _miAlarm.IsChecked = _s.AlarmOn;
         };

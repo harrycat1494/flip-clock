@@ -10,8 +10,9 @@ A small split-flap clock for the Windows desktop, in the style of the old airpor
 
 - Shows the time on flap cards that really turn, one card at a time, like the mechanical boards did.
 - **Move it:** drag the clock anywhere on the screen. Near the middle of the screen it catches, left-right and up-down separately, so it is easy to centre. Hold Ctrl while dragging to place it freely.
-- **Scale it:** drag an edge or a corner. It is drawn as vector shapes, so it stays sharp at any size.
-- **Always on top:** click the pin in the top right corner. Amber means on.
+- **Scale it:** drag an edge or a corner. It is drawn as vector shapes, so it stays sharp at any size. Make it very small and only the cards remain, without the header, bell and pin; make it bigger again and the full clock is back.
+- **On the taskbar:** right-click the clock and choose "Put on the taskbar". It shrinks to the bare cards and lies on the taskbar, at the end where Windows shows its own clock, and it stays in front when you click the taskbar or open Start. Choose the item again and the clock goes back to where it was, at its old size. More about this [below](#on-the-taskbar).
+- **Always on top:** click the pin in the top right corner. Amber means on. While a full-screen program runs (a film, a game, a presentation) the clock steps aside and comes back afterwards.
 - **Black or white**, with or without seconds: right-click the clock.
 - **Flap sound:** every card lands with the clack of a real split-flap display, timed to the card. Right-click the clock to choose: every flip, only on the full hour (a short rattle once an hour), or off.
 - **Alarm:** click the bell. The cards show the alarm time; click the upper or lower half of a card (or scroll over it) to change it, then click the bell again. The bell turns amber and the alarm time stands next to it. At that time the clock beeps like an old digital alarm clock, every day, until you click it (it gives up after a minute). Click the amber bell to switch the alarm off.
@@ -49,6 +50,16 @@ What the program does on your PC, in full:
 - It saves its settings in one small file: `%APPDATA%\FlipClock\settings.json`.
 - Only if you tick "Start with Windows", it adds one entry to your own user's start-up list (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`). Untick it and the entry is gone.
 
+### On the taskbar
+
+Windows does not let a program replace its own clock. So Flip Clock lies on top of it: "Put on the taskbar" makes the clock small and puts it at the right end of the taskbar on the screen it is on. You can also drag a small clock there yourself.
+
+- It needs "Always on top", and switches it on. If you untick "Always on top" while the clock lies on the taskbar, it first goes back to where it was, because the taskbar would cover it.
+- The small clock has no bell. To set the alarm, right-click it and choose "Set alarm time": the clock grows for setting and shrinks back afterwards.
+- When the clock leaves the taskbar it opens its window afresh, so the cards do their start-up shuffle once.
+- With a taskbar that hides itself automatically, the menu item does nothing.
+- Staying in front of the taskbar depends on how Windows stacks its own windows, which Microsoft does not document. It was measured on Windows 11 (build 26300): one click on the taskbar never covered the clock, and closing Start covered it for about a fifth of a second. Other Windows versions, a taskbar on a second screen and a taskbar at the side are untested. If it misbehaves on your PC, please open an issue.
+
 ### What the alarm cannot do
 
 It rings only while the PC is awake, the clock is running and the sound is not muted. It does not wake a sleeping PC, and an alarm time that passes while the PC sleeps is not made up for. Use it as a desk reminder, not to get out of bed.
@@ -58,6 +69,8 @@ It rings only while the PC is awake, the clock is running and the sound is not m
 Between two changes of the display the clock does nothing at all. With seconds hidden it wakes up once a minute. Measured on the author's PC: 0 ms of processor time in 10 seconds at rest, about 30 to 50 MB of memory.
 
 Showing seconds is the one thing that costs something, because a card then turns every second: about 9 % of one processor core on the author's PC, with the clock drawn large and the sound on. Version 1.0.0 needed about 21 % for the same. If you want it as light as possible, hide the seconds.
+
+Lying on the taskbar, the clock looks three times a second whether the taskbar has pushed in front of it. Measured: 16 ms of processor time in 10 seconds, about 0.2 % of one core. Anywhere else on the screen that check does not run.
 
 ## Remove it
 

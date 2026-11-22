@@ -250,11 +250,14 @@ internal sealed class HousingVisual : FrameworkElement
 {
     private static readonly Brush Grain = MakeGrain();
     private readonly Rect _body, _slot;
+    private readonly double _radius, _slotRadius;
 
-    public HousingVisual(Rect body, Rect slot)
+    public HousingVisual(Rect body, Rect slot, double radius = 16, double slotRadius = 11)
     {
         _body = body;
         _slot = slot;
+        _radius = radius;
+        _slotRadius = slotRadius;
         IsHitTestVisible = false;
         CacheMode = Look.Cache;
     }
@@ -286,7 +289,7 @@ internal sealed class HousingVisual : FrameworkElement
 
     protected override void OnRender(DrawingContext dc)
     {
-        const double r = 16;
+        double r = _radius;
         var t = Look.T;
 
         // body
@@ -299,17 +302,23 @@ internal sealed class HousingVisual : FrameworkElement
         dc.DrawRoundedRectangle(null, t.Outline, Rect.Inflate(_body, 0.2, 0.2), r + 0.2, r + 0.2);
 
         // recessed slot: dark at the top lip, a thin light line at the bottom lip
-        dc.DrawRoundedRectangle(t.SlotFill, t.SlotEdge, _slot, 11, 11);
+        dc.DrawRoundedRectangle(t.SlotFill, t.SlotEdge, _slot, _slotRadius, _slotRadius);
     }
 }
 
 /// <summary>The whole clock as one scalable drawing: shadow, housing, header line, flap modules.</summary>
 internal sealed class ClockFace : Canvas
 {
-    private const double M = 40;       // room around the housing for its shadow
-    private const double Pad = 16;     // housing edge to modules
-    private const double HeadH = 38;   // header line above the modules
     private const double Gap = 8;      // between modules
+    private double M = 40;             // room around the housing for its shadow
+    private double Pad = 16;           // housing edge to modules
+    private double HeadH = 38;         // header line above the modules (compact: just a narrow rim)
+
+    /// <summary>
+    /// Compact = cards only: no date line, no bell, no pin. For very small sizes, for example
+    /// sitting on the taskbar. Everything else stays reachable through the right-click menu.
+    /// </summary>
+    public bool Compact { get; private set; }
 
     private static readonly CultureInfo En = CultureInfo.GetCultureInfo("en-US");
 
@@ -325,7 +334,7 @@ internal sealed class ClockFace : Canvas
     private bool _started, _pinned, _alarmOn, _setMode;
     private string _alarmText = "";
 
-    public ClockFace(bool seconds) => Build(seconds);
+    public ClockFace(bool seconds, bool compact = false) => Build(seconds, compact);
 
     public bool Seconds { get; private set; }
     public double DesignW { get; private set; }
@@ -344,9 +353,13 @@ internal sealed class ClockFace : Canvas
     }
 
     /// <summary>(Re)build every part in the current colours. Called at start and when an option changes.</summary>
-    public void Build(bool seconds)
+    public void Build(bool seconds, bool compact = false)
     {
         Seconds = seconds;
+        Compact = compact;
+        M = compact ? 14 : 40;
+        Pad = compact ? 9 : 16;
+        HeadH = compact ? 9 : 38;
         Children.Clear();
         _digits.Clear();
         _started = false;
@@ -382,31 +395,36 @@ internal sealed class ClockFace : Canvas
             IsHitTestVisible = false,
         });
 
-        var slot = new Rect(M + Pad - 5, M + HeadH - 5, rowW + 10, Look.ModH + 10);
-        Children.Add(new HousingVisual(Housing, slot));
+        double rim = compact ? 4 : 5;
+        var slot = new Rect(M + Pad - rim, M + HeadH - rim, rowW + 2 * rim, Look.ModH + 2 * rim);
+        Children.Add(new HousingVisual(Housing, slot, compact ? 11 : 16, compact ? 8 : 11));
 
-        // header line: weekday in amber, date in soft white, pin on the right
         double headMid = M + 4 + (HeadH - 5) / 2;
-        Children.Add(_weekday);
-        Children.Add(_date);
-        SetLeft(_weekday, M + Pad + 1);
-        SetTop(_weekday, headMid - _weekday.CapHeight / 2);
-        SetTop(_date, headMid - _date.CapHeight / 2);
-        PlaceDate();
+        PinRect = BellRect = DoneRect = CancelRect = Rect.Empty;
+        if (!compact)
+        {
+            // header line: weekday in amber, date in soft white, pin on the right
+            Children.Add(_weekday);
+            Children.Add(_date);
+            SetLeft(_weekday, M + Pad + 1);
+            SetTop(_weekday, headMid - _weekday.CapHeight / 2);
+            SetTop(_date, headMid - _date.CapHeight / 2);
+            PlaceDate();
 
-        Children.Add(_pin);
-        PinRect = new Rect(M + hw - Pad - PinButton.Box + 5, headMid - PinButton.Box / 2, PinButton.Box, PinButton.Box);
-        SetLeft(_pin, PinRect.X);
-        SetTop(_pin, PinRect.Y);
+            Children.Add(_pin);
+            PinRect = new Rect(M + hw - Pad - PinButton.Box + 5, headMid - PinButton.Box / 2, PinButton.Box, PinButton.Box);
+            SetLeft(_pin, PinRect.X);
+            SetTop(_pin, PinRect.Y);
 
-        // the alarm bell sits left of the pin, the alarm time left of the bell
-        Children.Add(_bell);
-        BellRect = new Rect(PinRect.X - BellButton.Box + 2, PinRect.Y, BellButton.Box, BellButton.Box);
-        SetLeft(_bell, BellRect.X);
-        SetTop(_bell, BellRect.Y);
-        Children.Add(_alarmLabel);
-        SetTop(_alarmLabel, headMid - _alarmLabel.CapHeight / 2);
-        PlaceAlarmLabel();
+            // the alarm bell sits left of the pin, the alarm time left of the bell
+            Children.Add(_bell);
+            BellRect = new Rect(PinRect.X - BellButton.Box + 2, PinRect.Y, BellButton.Box, BellButton.Box);
+            SetLeft(_bell, BellRect.X);
+            SetTop(_bell, BellRect.Y);
+            Children.Add(_alarmLabel);
+            SetTop(_alarmLabel, headMid - _alarmLabel.CapHeight / 2);
+            PlaceAlarmLabel();
+        }
 
         double x = M + Pad, y = M + HeadH;
         for (int i = 0; i < n; i++)
@@ -433,20 +451,23 @@ internal sealed class ClockFace : Canvas
         // and an up and a down arrow on each of the four cards of the alarm time.
         _done = new HeaderButton("DONE", 50, primary: true);
         _cancel = new HeaderButton("CANCEL", 62, primary: false);
-        DoneRect = new Rect(M + hw - Pad - _done.Width, headMid - HeaderButton.H / 2, _done.Width, HeaderButton.H);
-        CancelRect = new Rect(DoneRect.X - 8 - _cancel.Width, DoneRect.Y, _cancel.Width, HeaderButton.H);
-        Place(_done, DoneRect.X, DoneRect.Y);
-        Place(_cancel, CancelRect.X, CancelRect.Y);
-        for (int i = 0; i < 4 && i < _digitRects.Count; i++)
+        if (!compact) // the compact clock switches to the full form for setting the alarm
         {
-            var r = _digitRects[i];
-            Place(new SetArrow(up: true), r.X + r.Width / 2 - 7, r.Y + 8);
-            Place(new SetArrow(up: false), r.X + r.Width / 2 - 7, r.Bottom - 16);
-        }
+            DoneRect = new Rect(M + hw - Pad - _done.Width, headMid - HeaderButton.H / 2, _done.Width, HeaderButton.H);
+            CancelRect = new Rect(DoneRect.X - 8 - _cancel.Width, DoneRect.Y, _cancel.Width, HeaderButton.H);
+            Place(_done, DoneRect.X, DoneRect.Y);
+            Place(_cancel, CancelRect.X, CancelRect.Y);
+            for (int i = 0; i < 4 && i < _digitRects.Count; i++)
+            {
+                var r = _digitRects[i];
+                Place(new SetArrow(up: true), r.X + r.Width / 2 - 7, r.Y + 8);
+                Place(new SetArrow(up: false), r.X + r.Width / 2 - 7, r.Bottom - 16);
+            }
 
-        Children.Add(_grip);
-        SetLeft(_grip, M + hw - Grip.Box - 5.5);
-        SetTop(_grip, M + hh - Grip.Box - 5.5);
+            Children.Add(_grip);
+            SetLeft(_grip, M + hw - Grip.Box - 5.5);
+            SetTop(_grip, M + hh - Grip.Box - 5.5);
+        }
 
         void Place(FrameworkElement el, double left, double top)
         {
@@ -458,7 +479,7 @@ internal sealed class ClockFace : Canvas
         }
     }
 
-    private static readonly Dictionary<bool, ImageSource> ShadowCache = new();
+    private static readonly Dictionary<string, ImageSource> ShadowCache = new();
 
     /// <summary>
     /// The soft shadow is painted once into a picture and then only stretched.
@@ -466,11 +487,21 @@ internal sealed class ClockFace : Canvas
     /// </summary>
     private ImageSource ShadowImage()
     {
-        if (ShadowCache.TryGetValue(Seconds, out var cached)) return cached;
+        string key = $"{Seconds}/{Compact}";
+        if (ShadowCache.TryGetValue(key, out var cached)) return cached;
 
         var c = new Canvas { Width = DesignW, Height = DesignH };
-        c.Children.Add(Shadow(blur: 30, depth: 0, opacity: 0.30));
-        c.Children.Add(Shadow(blur: 16, depth: 8, opacity: 0.46));
+        if (Compact)
+        {
+            // a small clock gets a small, tight shadow
+            c.Children.Add(Shadow(blur: 11, depth: 0, opacity: 0.28));
+            c.Children.Add(Shadow(blur: 7, depth: 3, opacity: 0.42));
+        }
+        else
+        {
+            c.Children.Add(Shadow(blur: 30, depth: 0, opacity: 0.30));
+            c.Children.Add(Shadow(blur: 16, depth: 8, opacity: 0.46));
+        }
         var size = new Size(DesignW, DesignH);
         c.Measure(size);
         c.Arrange(new Rect(size));
@@ -481,7 +512,7 @@ internal sealed class ClockFace : Canvas
             96 * k, 96 * k, PixelFormats.Pbgra32);
         bmp.Render(c);
         bmp.Freeze();
-        ShadowCache[Seconds] = bmp;
+        ShadowCache[key] = bmp;
         return bmp;
     }
 
@@ -491,8 +522,8 @@ internal sealed class ClockFace : Canvas
         {
             Width = Housing.Width - 6,
             Height = Housing.Height - 6,
-            RadiusX = 14,
-            RadiusY = 14,
+            RadiusX = Compact ? 9 : 14,
+            RadiusY = Compact ? 9 : 14,
             Fill = Brushes.Black,
             IsHitTestVisible = false,
             Effect = new DropShadowEffect { BlurRadius = blur, ShadowDepth = depth, Direction = 270, Opacity = opacity, Color = Colors.Black },
@@ -506,6 +537,7 @@ internal sealed class ClockFace : Canvas
 
     private void PlaceAlarmLabel()
     {
+        if (Compact) return; // the compact clock has no header line, so there is nothing to place
         _alarmLabel.Text = _alarmOn && !_setMode ? _alarmText : "";
         SetLeft(_alarmLabel, BellRect.X - 2 - _alarmLabel.TextWidth);
     }

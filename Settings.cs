@@ -13,7 +13,16 @@ internal sealed class Settings
     public double Scale { get; set; } = DefaultScale;
     public bool Topmost { get; set; } = true;
     public bool Seconds { get; set; }
+
+    /// <summary>Cards only (no date line, bell, pin): chosen automatically when the clock is made very small.</summary>
+    public bool Compact { get; set; }
     public bool Sound { get; set; } = true;
+
+    /// <summary>Where and how big the clock was before "Put on the taskbar", so that it can go back there.</summary>
+    public double? BackLeft { get; set; }
+    public double? BackTop { get; set; }
+    public double? BackScale { get; set; }
+    public bool? BackCompact { get; set; }
 
     /// <summary>"flip" (every card), "hour" (only at the full hour) or "off". Missing in files from before 1.2.</summary>
     public string? SoundMode { get; set; }

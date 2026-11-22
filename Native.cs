@@ -38,7 +38,36 @@ internal static class Native
 
     [DllImport("user32.dll")]
     public static extern short GetKeyState(int key);
+
+    // "Is this a bad moment to show something on screen?" Windows' own answer, made for notifications.
+    public const int QUNS_BUSY = 2, QUNS_RUNNING_D3D_FULL_SCREEN = 3, QUNS_PRESENTATION_MODE = 4;
+
+    [DllImport("shell32.dll")]
+    public static extern int SHQueryUserNotificationState(out int state);
     public static readonly IntPtr HWND_TOPMOST = new(-1);
+    public static readonly IntPtr HWND_NOTOPMOST = new(-2);
+    public const int GWLP_HWNDPARENT = -8; // despite the name: the window's owner
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "FindWindowW")]
+    public static extern IntPtr FindWindowByClass(string className, IntPtr title);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "FindWindowExW")]
+    public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string className, IntPtr title);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindow(IntPtr hwnd);
+
+    public const uint GW_OWNER = 4;
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetWindow(IntPtr hwnd, uint which);
+    public const uint GA_ROOT = 2;
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr WindowFromPoint(POINT p);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
 
     [DllImport("user32.dll")]
     public static extern bool GetCursorPos(out POINT p);

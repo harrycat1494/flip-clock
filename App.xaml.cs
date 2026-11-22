@@ -91,12 +91,30 @@ public partial class App : Application
             leave.WaitOne();
             Dispatcher.BeginInvoke(() =>
             {
+                Quitting = true;
                 _window?.Close(); // saves place, size and settings
                 Shutdown();
             });
         }) { IsBackground = true }.Start();
 
+        OpenClock();
+    }
+
+    /// <summary>True once the clock is meant to end (Close in the menu, or a newer copy taking over).</summary>
+    public static bool Quitting;
+
+    private void OpenClock()
+    {
         _window = new ClockWindow(Settings.Load());
+        // If the window disappears although nobody closed the clock, open it again. This happens when the
+        // clock lay on the taskbar and Windows Explorer restarted: Windows removes a taskbar's attached
+        // windows together with it. The clock also does it on purpose when it leaves the taskbar
+        // (see ClockWindow.UpdateTaskbarAnchor).
+        _window.Closed += (_, _) =>
+        {
+            if (Quitting) Shutdown();
+            else Dispatcher.BeginInvoke(OpenClock);
+        };
         _window.Show();
     }
 
