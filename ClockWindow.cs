@@ -22,8 +22,6 @@ internal sealed class ClockWindow : Window
     private (double scale, double left, double top)? _compactReturn;
     private readonly DispatcherTimer _guardTimer = new(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(2) };
     private bool _hiddenForFullScreen;
-    private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string RunName = "FlipClock";
 
     private readonly Settings _s;
     private readonly ClockFace _face;
@@ -91,7 +89,7 @@ internal sealed class ClockWindow : Window
 
         ApplyScale();
         PlaceOnScreen();
-        KeepAutostartCurrent();
+        Autostart.KeepCurrent();
         ContextMenu = BuildMenu();
 
         _warmTimer.Tick += (_, _) =>
@@ -1300,46 +1298,6 @@ internal sealed class ClockWindow : Window
         UpdateTaskbarAnchor();
     }
 
-    private static bool AutostartOn()
-    {
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(RunKey);
-            return key?.GetValue(RunName) is string;
-        }
-        catch { return false; }
-    }
-
-    /// <summary>
-    /// If "Start with Windows" is ticked but still names another file (the old copy, after an update
-    /// into a different folder), point it at the program that is running now. Otherwise the old version
-    /// would come back at the next sign-in. Does nothing if the option is not ticked.
-    /// </summary>
-    private static void KeepAutostartCurrent()
-    {
-        try
-        {
-            if (Environment.ProcessPath is not string exe) return;
-            using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
-            if (key?.GetValue(RunName) is not string entry) return;
-            string wanted = $"\"{exe}\"";
-            if (!string.Equals(entry, wanted, StringComparison.OrdinalIgnoreCase)) key.SetValue(RunName, wanted);
-        }
-        catch { /* no access: leave it as it is */ }
-    }
-
-    private static void SetAutostart(bool on)
-    {
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
-            if (key == null) return;
-            if (on && Environment.ProcessPath is string exe) key.SetValue(RunName, $"\"{exe}\"");
-            else key.DeleteValue(RunName, throwOnMissingValue: false);
-        }
-        catch { /* no access: leave it as it is */ }
-    }
-
     private ContextMenu BuildMenu()
     {
         _miTop = new MenuItem { Header = "Always on top", IsChecked = Topmost };
@@ -1348,12 +1306,11 @@ internal sealed class ClockWindow : Window
         _miSeconds = new MenuItem { Header = "Show seconds", IsChecked = _face.Seconds };
         _miSeconds.Click += (_, _) => SetSeconds(!_face.Seconds);
 
-        _miAutostart = new MenuItem { Header = "Start with Windows", IsChecked = AutostartOn() };
-        _miAutostart.Click += (_, _) =>
-        {
-            SetAutostart(!AutostartOn());
-            _miAutostart.IsChecked = AutostartOn();
-        };
+        _miAutostart = new MenuItem { Header = "Start with Windows", IsChecked = Autostart.On };
+        _miAutostart.Click += (_, _) => Autostart.Set(!Autostart.On,
+            done: () => _miAutostart.IsChecked = Autostart.On,
+            refused: why => MessageBox.Show(why, "Flip Clock", MessageBoxButton.OK, MessageBoxImage.Information));
+        Autostart.Refresh(() => _miAutostart.IsChecked = Autostart.On);
 
         _miSoundFlip = new MenuItem { Header = "Flap sound: every flip" };
         _miSoundFlip.Click += (_, _) => SetSoundMode("flip");
@@ -1420,7 +1377,8 @@ internal sealed class ClockWindow : Window
         menu.Closed += (_, _) => TrimSoon(5000);
         menu.Opened += (_, _) =>
         {
-            _miAutostart.IsChecked = AutostartOn();
+            _miAutostart.IsChecked = Autostart.On;
+            Autostart.Refresh(() => _miAutostart.IsChecked = Autostart.On);
             _miTaskbar.IsChecked = OnTaskbar;
             _miAlarm.Header = $"Alarm at {ClockFace.TimeText(_s.AlarmHour, _s.AlarmMinute, _face.Hour12)}";
             _miAlarm.IsChecked = _s.AlarmOn;

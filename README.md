@@ -128,6 +128,20 @@ All-in-one version:
 dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o portable
 ```
 
+Microsoft Store package (an `.msix` file; needs Microsoft's packaging tools, see the notes at the top of the script):
+
+```
+powershell -File store\build-store.ps1 -IdentityName "..." -Publisher "..." -PublisherDisplayName "..."
+```
+
+## Privacy
+
+Flip Clock collects nothing and never goes online. The details are in [PRIVACY.md](PRIVACY.md).
+
+## From the maker of SizeSpec
+
+Flip Clock comes from the maker of [SizeSpec](https://sizespec.com), which resizes, crops and compresses product photos to the exact specs of Etsy, eBay, Amazon, Walmart, Shopify and more, in your browser.
+
 ## Say thanks
 
 Flip Clock is free and stays free: no ads, no paid version, nothing locked. If you enjoy it and want to say thanks, you can [leave a tip via PayPal](https://www.paypal.com/donate/?hosted_button_id=BAREZFVCRGNUA). Entirely optional.

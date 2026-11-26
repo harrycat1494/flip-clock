@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Description of the Microsoft Store package. build-store.ps1 fills in the values in {braces}:
+     the three identity values come from Partner Center (Product management, Product identity). -->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+  xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap5 uap10 rescap">
+
+  <Identity Name="{IdentityName}" Version="{Version}" Publisher="{Publisher}" ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>{DisplayName}</DisplayName>
+    <PublisherDisplayName>{PublisherDisplayName}</PublisherDisplayName>
+    <Description>A split-flap clock for the Windows desktop</Description>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Capabilities>
+    <!-- an ordinary desktop program, packaged: it runs with the rights of the signed-in user -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+
+  <Applications>
+    <Application Id="FlipClock" Executable="FlipClock.exe"
+                 uap10:RuntimeBehavior="packagedClassicApp" uap10:TrustLevel="mediumIL">
+      <uap:VisualElements DisplayName="{DisplayName}"
+                          Description="A split-flap clock for the Windows desktop"
+                          Square150x150Logo="Assets\Square150x150Logo.png"
+                          Square44x44Logo="Assets\Square44x44Logo.png"
+                          BackgroundColor="transparent" />
+      <Extensions>
+        <!-- "Start with Windows" (off until the user ticks it in the clock's menu), see Autostart.cs -->
+        <uap5:Extension Category="windows.startupTask" Executable="FlipClock.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap5:StartupTask TaskId="FlipClockStartup" Enabled="false" DisplayName="Flip Clock" />
+        </uap5:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+</Package>

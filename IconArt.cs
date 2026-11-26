@@ -73,6 +73,36 @@ internal static class IconArt
         return ms.ToArray();
     }
 
+    /// <summary>
+    /// One see-through PNG of the icon, <paramref name="px"/> pixels square. <paramref name="share"/> is how much
+    /// of the square the icon fills (1 = all of it; tiles want room around it).
+    /// FlipClock.exe --icon-png file.png --size 150 [--share 0.62]
+    /// </summary>
+    public static void WritePng(string path, int px, double share)
+    {
+        Look.T = Theme.Black;
+        int inner = Math.Max(1, (int)Math.Round(px * Math.Clamp(share, 0.1, 1)));
+        var art = Draw(single: inner <= 32);
+        double dpi = 96.0 * inner / Art;
+        var icon = new RenderTargetBitmap(inner, inner, dpi, dpi, PixelFormats.Pbgra32);
+        icon.Render(art);
+
+        var dv = new DrawingVisual();
+        using (var dc = dv.RenderOpen())
+        {
+            double at = (px - inner) / 2.0;
+            dc.DrawImage(icon, new Rect(at, at, inner, inner));
+        }
+        var whole = new RenderTargetBitmap(px, px, 96, 96, PixelFormats.Pbgra32);
+        whole.Render(dv);
+        var enc = new PngBitmapEncoder();
+        enc.Frames.Add(BitmapFrame.Create(whole));
+        string full = Path.GetFullPath(path);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        using var fs = File.Create(full);
+        enc.Save(fs);
+    }
+
     public static void Write(string icoPath)
     {
         Look.T = Theme.Black;

@@ -24,6 +24,20 @@
     <Version>1.4.0</Version>
   </PropertyGroup>
 
+  <!-- The Microsoft Store version: built with -p:Store=true. It may use the Windows functions a Store
+       app needs for "Start with Windows". The downloaded program is built without it and stays as small as it is. -->
+  <PropertyGroup Condition="'$(Store)' == 'true'">
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <DefineConstants>$(DefineConstants);STORE</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- files for building the Store package, not source code of the clock -->
+    <Compile Remove="store\**" />
+    <None Remove="store\**" />
+  </ItemGroup>
+
   <PropertyGroup>
     <!-- Folder with the flap sounds. To build with your own: -p:FlapDir=path\to\folder
          (WAV files, mono, 16 bit, 44.1 kHz, plain 44-byte header). -->

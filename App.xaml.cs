@@ -31,6 +31,22 @@ public partial class App : Application
             return;
         }
 
+        int pngArg = Array.IndexOf(e.Args, "--icon-png");
+        if (pngArg >= 0 && pngArg + 1 < e.Args.Length)
+        {
+            int code = 0;
+            try
+            {
+                int sizeArg = Array.IndexOf(e.Args, "--size"), shareArg = Array.IndexOf(e.Args, "--share");
+                int px = sizeArg >= 0 ? int.Parse(e.Args[sizeArg + 1], CultureInfo.InvariantCulture) : 256;
+                double share = shareArg >= 0 ? double.Parse(e.Args[shareArg + 1], CultureInfo.InvariantCulture) : 1;
+                IconArt.WritePng(e.Args[pngArg + 1], px, share);
+            }
+            catch (Exception ex) { Console.Error.WriteLine(ex); code = 1; }
+            Shutdown(code);
+            return;
+        }
+
         if (Array.IndexOf(e.Args, "--frames") >= 0)
         {
             int code = 0;
