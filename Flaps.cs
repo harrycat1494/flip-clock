@@ -11,6 +11,15 @@ internal static class Look
 {
     public const double ModW = 92, ModH = 132, ColonW = 30, Radius = 7, Split = 2.2, DigitInk = 78;
 
+    /// <summary>The narrow AM/PM card of the 12-hour clock: its width, and how tall its letters are.</summary>
+    public const double MeridiemW = 46, MeridiemInk = 23;
+
+    /// <summary>A colour chosen for the digits. Null = the colour that belongs to the look (black or white).</summary>
+    public static Brush? CustomInk;
+
+    /// <summary>What digits, dots and the AM/PM letters are painted with.</summary>
+    public static Brush Ink => CustomInk ?? T.Digit;
+
     public static Typeface DigitFace = new(new FontFamily("Bahnschrift"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
     public static readonly Typeface LabelFace = new(new FontFamily("Bahnschrift"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
 
@@ -119,6 +128,12 @@ internal sealed class Theme
     public Brush Weekday = null!, Date = null!, PinOnFill = null!, PinGlow = null!, GripDot = null!;
     public Pen PinOn = null!, PinOff = null!, PinOffHover = null!;
 
+    /// <summary>Lettering on a button filled with the header's accent colour.</summary>
+    public Brush OnAccent = Look.Solid(Color.FromRgb(0x16, 0x14, 0x10));
+
+    /// <summary>The accent for marks drawn on the cards themselves (the arrows while setting the alarm).</summary>
+    public Pen CardAccent = null!;
+
     // housing
     public Brush Body = null!, SlotFill = null!;
     public Pen Bevel = null!, Outline = null!, SlotEdge = null!;
@@ -133,6 +148,80 @@ internal sealed class Theme
         b.GradientStops.Add(new GradientStop(Color.FromArgb(0, c.R, c.G, c.B), 1));
         b.Freeze();
         return b;
+    }
+
+    /// <summary>How bright a colour looks, 0 (black) to 1 (white).</summary>
+    public static double Luminance(Color c)
+    {
+        static double Lin(byte v)
+        {
+            double x = v / 255.0;
+            return x <= 0.04045 ? x / 12.92 : Math.Pow((x + 0.055) / 1.055, 2.4);
+        }
+        return 0.2126 * Lin(c.R) + 0.7152 * Lin(c.G) + 0.0722 * Lin(c.B);
+    }
+
+    private static Color Mix(Color a, Color b, double share) => Color.FromRgb(
+        (byte)Math.Round(a.R + (b.R - a.R) * share),
+        (byte)Math.Round(a.G + (b.G - a.G) * share),
+        (byte)Math.Round(a.B + (b.B - a.B) * share));
+
+    /// <summary>The colour digits have on flaps of this colour as long as none is chosen for them.</summary>
+    public static Color InkOn(Color flap) => Luminance(flap) > 0.3 ? C(0x1A, 0x1A, 0x1C) : C(0xF3, 0xF0, 0xE8);
+
+    /// <summary>
+    /// This look with the flaps in another colour. Light and shadow on them are taken from the white look
+    /// for a light colour and from the black look for a dark one, and the digits turn dark or light to match
+    /// (unless a colour is chosen for them).
+    /// </summary>
+    public Theme WithFlaps(Color flap)
+    {
+        const double h = Look.ModH, half = h / 2;
+        double lum = Luminance(flap), k = Math.Clamp(lum / 0.7, 0, 1);
+        var like = lum > 0.3 ? White : Black;
+        double Between(double dark, double light) => dark + (light - dark) * k;
+
+        var t = (Theme)MemberwiseClone();
+        t.CardTop = Look.Vertical(0, half, Mix(flap, Colors.White, Between(0.04, 0.35)), Mix(flap, Colors.Black, Between(0.08, 0.03)));
+        t.CardBottom = Look.Vertical(half, h, flap, Mix(flap, Colors.Black, Between(0.34, 0.075)));
+        t.Digit = Look.Solid(InkOn(flap));
+        t.CardAccent = Look.Stroke(t.Digit, 2, round: true);
+        t.ShadeK = like.ShadeK;
+        t.EdgeLight = like.EdgeLight;
+        t.LipLight = like.LipLight;
+        t.Overhang = like.Overhang;
+        t.TopFalloff = like.TopFalloff;
+        t.HingeMetal = like.HingeMetal;
+        t.HingeOutline = like.HingeOutline;
+        return t;
+    }
+
+    /// <summary>
+    /// This look with the frame in another colour. The cards stay as they are. Everything written on the
+    /// frame (weekday, date, bell, pin) becomes light on a dark frame and dark on a light one, so it can
+    /// be read on any colour.
+    /// </summary>
+    public Theme WithFrame(Color frame)
+    {
+        bool light = Luminance(frame) > 0.26;
+        var edges = light ? White : Black;
+        var ink = light ? C(0x1A, 0x1A, 0x1C) : C(0xF6, 0xF4, 0xEE);
+        Color Ink(byte alpha) => Color.FromArgb(alpha, ink.R, ink.G, ink.B);
+
+        var t = (Theme)MemberwiseClone();
+        t.Body = Look.Relative((Mix(frame, Colors.White, 0.09), 0), (frame, 0.45), (Mix(frame, Colors.Black, 0.2), 1));
+        t.Bevel = edges.Bevel;
+        t.Outline = edges.Outline;
+        t.Weekday = Look.Solid(ink);
+        t.Date = Look.Solid(Ink(0xB4));
+        t.PinOn = Look.Stroke(Look.Solid(ink), 2, round: true);
+        t.PinOff = Look.Stroke(Look.Solid(Ink(0x78)), 2, round: true);
+        t.PinOffHover = Look.Stroke(Look.Solid(Ink(0xD0)), 2, round: true);
+        t.PinOnFill = Look.Solid(Ink(0x48));
+        t.PinGlow = Glow(ink, 0x34);
+        t.GripDot = Look.Solid(Ink(0x8C));
+        t.OnAccent = Look.Solid(light ? C(0xF6, 0xF4, 0xEE) : C(0x16, 0x14, 0x10));
+        return t;
     }
 
     private static Theme MakeBlack()
@@ -156,6 +245,7 @@ internal sealed class Theme
             Weekday = Look.Solid(amber),
             Date = Look.Solid(A(0xA8, 0xF3, 0xF0, 0xE8)),
             PinOn = Look.Stroke(Look.Solid(amber), 2, round: true),
+            CardAccent = Look.Stroke(Look.Solid(amber), 2, round: true),
             PinOff = Look.Stroke(Look.Solid(C(0x74, 0x74, 0x7A)), 2, round: true),
             PinOffHover = Look.Stroke(Look.Solid(C(0xC4, 0xC2, 0xBC)), 2, round: true),
             PinOnFill = Look.Solid(A(0x48, 0xF2, 0xB2, 0x33)),
@@ -192,6 +282,7 @@ internal sealed class Theme
             Weekday = Look.Solid(amber),
             Date = Look.Solid(A(0xA6, 0x1A, 0x1A, 0x1C)),
             PinOn = Look.Stroke(Look.Solid(amber), 2, round: true),
+            CardAccent = Look.Stroke(Look.Solid(amber), 2, round: true),
             PinOff = Look.Stroke(Look.Solid(C(0x9C, 0x9A, 0x96)), 2, round: true),
             PinOffHover = Look.Stroke(Look.Solid(C(0x4A, 0x4A, 0x4E)), 2, round: true),
             PinOnFill = Look.Solid(A(0x40, 0xB0, 0x6A, 0x08)),
@@ -218,7 +309,40 @@ internal static class Glyphs
     public static void Reset()
     {
         Cache.Clear();
+        MeridiemCache.Clear();
         _em = 0;
+    }
+
+    private static readonly Dictionary<char, Geometry> MeridiemCache = new();
+
+    /// <summary>
+    /// The AM/PM card: 'A' is a card with A on its upper half and M on its lower half, 'P' the same with P.
+    /// Each letter sits in the middle of its half.
+    /// </summary>
+    public static Geometry Meridiem(char c)
+    {
+        if (c != 'A' && c != 'P') return Geometry.Empty;
+        if (MeridiemCache.TryGetValue(c, out var cached)) return cached;
+
+        double em = 100 * Look.MeridiemInk / Raw('M', 100).Bounds.Height;
+        var cap = Raw('M', em).Bounds; // both letters share the height of the M
+        double half = Look.ModH / 2, s = Look.Split / 2, room = half - s;
+
+        var group = new GeometryGroup { FillRule = FillRule.Nonzero };
+        group.Children.Add(Letter(c, (room - cap.Height) / 2));
+        group.Children.Add(Letter('M', half + s + (room - cap.Height) / 2));
+        group.Freeze();
+        MeridiemCache[c] = group;
+        return group;
+
+        Geometry Letter(char ch, double top)
+        {
+            var g = Raw(ch, em);
+            var b = g.Bounds;
+            g = g.Clone();
+            g.Transform = new TranslateTransform((Look.MeridiemW - b.Width) / 2 - b.X, top - cap.Y);
+            return g;
+        }
     }
 
     private static Geometry Raw(char c, double size) =>
@@ -255,13 +379,15 @@ internal sealed class HalfFace : FrameworkElement
     private readonly bool _top;
     private readonly double _w;
     private readonly bool _colon;
+    private readonly Func<char, Geometry> _glyphs;
     private char _ch = ' ';
 
-    public HalfFace(bool top, double width = Look.ModW, bool colon = false)
+    public HalfFace(bool top, double width = Look.ModW, bool colon = false, Func<char, Geometry>? glyphs = null)
     {
         _top = top;
         _w = width;
         _colon = colon;
+        _glyphs = glyphs ?? Glyphs.Get;
         Width = width;
         Height = Look.ModH;
         IsHitTestVisible = false;
@@ -290,7 +416,7 @@ internal sealed class HalfFace : FrameworkElement
         double h = Look.ModH, half = h / 2, s = Look.Split / 2, r = Look.Radius;
         var card = new Rect(0, 0, _w, h);
         var t = Look.T;
-        var ink = Look.AlarmFlash ? Look.AlarmBrush : t.Digit; // red while the alarm flashes
+        var ink = Look.AlarmFlash ? Look.AlarmBrush : Look.Ink; // red while the alarm flashes
 
         dc.PushClip(new RectangleGeometry(HalfRect(_top, _w)));
         dc.DrawRoundedRectangle(_top ? t.CardTop : t.CardBottom, null, card, r, r);
@@ -302,7 +428,7 @@ internal sealed class HalfFace : FrameworkElement
         }
         else
         {
-            dc.DrawGeometry(ink, null, Glyphs.Get(_ch));
+            dc.DrawGeometry(ink, null, _glyphs(_ch));
         }
 
         if (_top)
@@ -353,9 +479,12 @@ internal sealed class HalfShade : FrameworkElement
 /// <summary>The two small axle clips left and right of the split.</summary>
 internal sealed class HingePins : FrameworkElement
 {
-    public HingePins()
+    private readonly double _w;
+
+    public HingePins(double width = Look.ModW)
     {
-        Width = Look.ModW;
+        _w = width;
+        Width = width;
         Height = Look.ModH;
         IsHitTestVisible = false;
         CacheMode = Look.Cache;
@@ -366,7 +495,7 @@ internal sealed class HingePins : FrameworkElement
         double half = Look.ModH / 2;
         var t = Look.T;
         dc.DrawRoundedRectangle(t.HingeMetal, t.HingeOutline, new Rect(-2.4, half - 8, 6.4, 16), 1.6, 1.6);
-        dc.DrawRoundedRectangle(t.HingeMetal, t.HingeOutline, new Rect(Look.ModW - 4, half - 8, 6.4, 16), 1.6, 1.6);
+        dc.DrawRoundedRectangle(t.HingeMetal, t.HingeOutline, new Rect(_w - 4, half - 8, 6.4, 16), 1.6, 1.6);
     }
 }
 
@@ -402,8 +531,9 @@ internal sealed class FallEase : EasingFunctionBase
 /// </summary>
 internal sealed class FlapModule : Canvas
 {
-    private const string Deck = " 0123456789";
+    private const string Digits = " 0123456789";
     private const double FastMs = 82, FinalMs = 330;
+    private readonly string Deck;
 
     /// <summary>
     /// Pictures per second while a card turns. 60 is smoothest. With seconds shown a card turns every second,
@@ -421,21 +551,35 @@ internal sealed class FlapModule : Canvas
         set => SetValue(AngleProperty, value);
     }
 
-    private readonly HalfFace _staticTop = new(true), _staticBottom = new(false);
-    private readonly HalfFace _flapFront = new(true), _flapBack = new(false);
-    private readonly HalfShade _shadeTop = new(true), _shadeBottom = new(false);
-    private readonly HalfShade _shadeFront = new(true), _shadeBack = new(false);
+    private readonly HalfFace _staticTop, _staticBottom, _flapFront, _flapBack;
+    private readonly HalfShade _shadeTop, _shadeBottom, _shadeFront, _shadeBack;
     private readonly Canvas _front = new(), _back = new();
-    private readonly ScaleTransform _frontT = new(1, 1, Look.ModW / 2, Look.ModH / 2);
-    private readonly ScaleTransform _backT = new(1, 1, Look.ModW / 2, Look.ModH / 2);
+    private readonly ScaleTransform _frontT, _backT;
+    private readonly HingePins _pins;
 
     private char _current = ' ', _target = ' ', _next = ' ';
     private bool _flipping;
 
-    public FlapModule()
+    /// <summary>The AM/PM card of the 12-hour clock: three cards (blank, AM, PM), narrower than a digit.</summary>
+    public static FlapModule Meridiem() => new(" AP", Look.MeridiemW, Glyphs.Meridiem);
+
+    public FlapModule() : this(Digits, Look.ModW, null) { }
+
+    private FlapModule(string deck, double width, Func<char, Geometry>? glyphs)
     {
-        Width = Look.ModW;
+        Deck = deck;
+        Width = width;
         Height = Look.ModH;
+        _staticTop = new HalfFace(true, width, glyphs: glyphs);
+        _staticBottom = new HalfFace(false, width, glyphs: glyphs);
+        _flapFront = new HalfFace(true, width, glyphs: glyphs);
+        _flapBack = new HalfFace(false, width, glyphs: glyphs);
+        _shadeTop = new HalfShade(true, width);
+        _shadeBottom = new HalfShade(false, width);
+        _shadeFront = new HalfShade(true, width);
+        _shadeBack = new HalfShade(false, width);
+        _frontT = new ScaleTransform(1, 1, width / 2, Look.ModH / 2);
+        _backT = new ScaleTransform(1, 1, width / 2, Look.ModH / 2);
 
         _front.Children.Add(_flapFront);
         _front.Children.Add(_shadeFront);
@@ -453,7 +597,8 @@ internal sealed class FlapModule : Canvas
         Children.Add(_shadeBottom);
         Children.Add(_front);
         Children.Add(_back);
-        Children.Add(new HingePins());
+        _pins = new HingePins(width);
+        Children.Add(_pins);
     }
 
     /// <summary>Paint the cards again (their colour changed).</summary>
@@ -463,6 +608,7 @@ internal sealed class FlapModule : Canvas
         _staticBottom.InvalidateVisual();
         _flapFront.InvalidateVisual();
         _flapBack.InvalidateVisual();
+        _pins.InvalidateVisual();
     }
 
     /// <summary>Turn forward until the module shows <paramref name="c"/>.</summary>
@@ -506,7 +652,7 @@ internal sealed class FlapModule : Canvas
         _shadeBottom.Opacity = 0;
     }
 
-    private static int Steps(char from, char to)
+    private int Steps(char from, char to)
     {
         int a = Deck.IndexOf(from), b = Deck.IndexOf(to);
         return ((b - a) % Deck.Length + Deck.Length) % Deck.Length;

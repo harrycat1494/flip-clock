@@ -14,6 +14,8 @@ A small split-flap clock for the Windows desktop, in the style of the old airpor
 - **On the taskbar:** right-click the clock and choose "Put on the taskbar". It shrinks to the bare cards and lies on the taskbar, at the end where Windows shows its own clock, and it stays in front when you click the taskbar or open Start. Choose the item again and the clock goes back to where it was, at its old size. More about this [below](#on-the-taskbar).
 - **Always on top:** click the pin in the top right corner. Amber means on. While a full-screen program runs (a film, a game, a presentation) the clock steps aside and comes back afterwards.
 - **Black or white**, with or without seconds: right-click the clock.
+- **12-hour or 24-hour time:** right-click the clock and tick "12-hour time". The hours then run from 1 to 12, and an extra flap card at the end shows AM or PM and turns over at noon and at midnight. The alarm time is shown the same way.
+- **Your own colours:** right-click the clock and choose "Colors…". A small panel opens next to the clock, for the digits, the flaps and the frame. Pick any colour in the field and on the rainbow strip, or type a colour code such as `#F2B233`. The clock shows every colour at once while you try it. The panel keeps the last five colours you chose, so one click brings a colour back. "Reset" returns a part to its original colour. More about this [below](#colours).
 - **Flap sound:** every card lands with the clack of a real split-flap display, timed to the card. Right-click the clock to choose: every flip, only on the full hour (a short rattle once an hour), or off.
 - **Alarm:** click the bell. The cards show the alarm time: click the arrow above or below a card (or scroll over it) to change it, then press Done. Cancel leaves everything as it was. The bell turns amber and the alarm time stands next to it. At that time the clock beeps like an old digital alarm clock and its digits flash red. Click the clock to silence it; if nobody does, it stops by itself after one minute and rings again the next day. Click the amber bell to switch the alarm off.
 - **Start with Windows:** right-click the clock and tick it.
@@ -70,6 +72,23 @@ Windows does not let a program replace its own clock. So Flip Clock lies on top 
 - When the clock leaves the taskbar it opens its window afresh, so the cards do their start-up shuffle once.
 - With a taskbar that hides itself automatically, the menu item does nothing.
 - Staying in front of the taskbar depends on how Windows stacks its own windows, which Microsoft does not document. It was measured on Windows 11 (build 26300): one click on the taskbar never covered the clock, and closing Start covered it for about a fifth of a second. Other Windows versions, a taskbar on a second screen and a taskbar at the side are untested. If it misbehaves on your PC, please open an issue.
+
+### 12-hour time
+
+![The 12-hour clock: 9:05 with a flap card that shows PM](post/09-12-hour.png)
+
+The AM/PM card is a real flap card like the others, only narrower. It is also there on the small clock for the taskbar.
+
+### Colours
+
+![Six clocks in different colours of digits, flaps and frame](post/10-colors.png)
+
+![The colour panel under a clock with dark blue flaps and amber digits](post/11-color-chooser.png)
+
+- The switch at the top of the panel chooses what you are colouring: Digits, Flaps or Frame.
+- Weekday, date, bell and pin turn light on a dark frame and dark on a light frame by themselves. The digits do the same on the flaps, until you give them a colour of their own.
+- "Done" keeps the colours, "Cancel" puts back the ones from before. The Esc key cancels too.
+- Black and White stay the two starting looks, and each one remembers its own colours.
 
 ### What the alarm cannot do
 

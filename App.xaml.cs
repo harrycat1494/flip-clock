@@ -40,6 +40,15 @@ public partial class App : Application
             return;
         }
 
+        if (Array.IndexOf(e.Args, "--chooser") >= 0)
+        {
+            int code = 0;
+            try { ChooserShot(e.Args); }
+            catch (Exception ex) { Console.Error.WriteLine(ex); code = 1; }
+            Shutdown(code);
+            return;
+        }
+
         if (Array.IndexOf(e.Args, "--shot") >= 0)
         {
             int code = 0;
@@ -154,6 +163,7 @@ public partial class App : Application
     /// Test picture without opening a window:
     /// --shot file.png [--seconds] [--time HH:mm:ss] [--scale 2] [--hover] [--unpinned]
     /// [--pose index,from,to,angle] [--bg RRGGBB] [--font "Family;Weight;Stretch"]
+    /// [--h12] [--compact] [--ink RRGGBB] [--flap RRGGBB] [--frame RRGGBB] [--alarm HH:mm]
     /// </summary>
     private static void Shot(string[] args)
     {
@@ -175,8 +185,17 @@ public partial class App : Application
         }
 
         if (Has("--white")) Look.T = Theme.White;
-        var face = new ClockFace(Has("--seconds")) { Pinned = !Has("--unpinned") };
+        if (Hsv.TryHex(Arg("--flap", ""), out var flap)) Look.T = Look.T.WithFlaps(flap);
+        if (Hsv.TryHex(Arg("--frame", ""), out var frame)) Look.T = Look.T.WithFrame(frame);
+        if (Hsv.TryHex(Arg("--ink", ""), out var ink)) Look.CustomInk = Look.Solid(ink);
+        var face = new ClockFace(Has("--seconds"), Has("--compact"), Has("--h12")) { Pinned = !Has("--unpinned") };
         var time = DateTime.Today + TimeSpan.Parse(Arg("--time", "10:28:47"), CultureInfo.InvariantCulture);
+        string alarm = Arg("--alarm", "");
+        if (alarm.Length > 0)
+        {
+            var at = TimeSpan.Parse(alarm, CultureInfo.InvariantCulture);
+            face.SetAlarm(true, at.Hours, at.Minutes);
+        }
         face.SetTimeInstant(time);
         if (Has("--hover")) face.SetHover(true, animate: false);
 
@@ -189,6 +208,49 @@ public partial class App : Application
 
         double scale = double.Parse(Arg("--scale", "2"), CultureInfo.InvariantCulture);
         SavePicture(face, scale, Arg("--bg", "7C8794"), Arg("--shot", "shot.png"));
+    }
+
+    /// <summary>
+    /// Picture of the colour chooser without opening it, on a see-through background:
+    /// --chooser file.png [--white] [--ink RRGGBB] [--flap RRGGBB] [--frame RRGGBB] [--part 0|1|2]
+    /// [--recent RRGGBB,RRGGBB,...] [--scale 2]
+    /// </summary>
+    private static void ChooserShot(string[] args)
+    {
+        string Arg(string name, string fallback)
+        {
+            int i = Array.IndexOf(args, name);
+            return i >= 0 && i + 1 < args.Length ? args[i + 1] : fallback;
+        }
+        Color? Opt(string name) => Hsv.TryHex(Arg(name, ""), out var c) ? c : null;
+
+        var look = Array.IndexOf(args, "--white") >= 0 ? Theme.White : Theme.Black;
+        var recent = new List<Color>();
+        foreach (string hex in Arg("--recent", "").Split(',', StringSplitOptions.RemoveEmptyEntries))
+            if (Hsv.TryHex(hex, out var rc)) recent.Add(rc);
+        var ownInk = ((SolidColorBrush)look.Digit).Color;
+
+        var w = new ColorWindow(Opt("--ink"), Opt("--flap"), Opt("--frame"),
+            ((GradientBrush)look.CardBottom).GradientStops[0].Color, ((GradientBrush)look.Body).GradientStops[1].Color,
+            flap => flap is Color f ? Theme.InkOn(f) : ownInk, recent);
+        w.ShowPart(int.Parse(Arg("--part", "0"), CultureInfo.InvariantCulture));
+
+        var root = (FrameworkElement)w.Content;
+        root.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        var size = root.DesiredSize;
+        root.Arrange(new Rect(size));
+        root.UpdateLayout();
+
+        double scale = double.Parse(Arg("--scale", "2"), CultureInfo.InvariantCulture);
+        var bmp = new RenderTargetBitmap((int)Math.Ceiling(size.Width * scale), (int)Math.Ceiling(size.Height * scale),
+            96 * scale, 96 * scale, PixelFormats.Pbgra32);
+        bmp.Render(root);
+        var enc = new PngBitmapEncoder();
+        enc.Frames.Add(BitmapFrame.Create(bmp));
+        string path = Path.GetFullPath(Arg("--chooser", "chooser.png"));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        using var fs = File.Create(path);
+        enc.Save(fs);
     }
 
     /// <summary>Paint the clock into a PNG. Background "none" keeps it see-through.</summary>

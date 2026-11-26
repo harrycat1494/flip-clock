@@ -39,6 +39,9 @@ internal sealed class ClockWindow : Window
     private int _prevHour, _prevMinute;
     private MenuItem _miTaskbar = null!;
     private MenuItem _miTop = null!, _miSeconds = null!, _miAutostart = null!, _miBlack = null!, _miWhite = null!, _miAlarm = null!;
+    private MenuItem _miHour12 = null!;
+    private Theme _look = Theme.Black; // black or white; Look.T is this look, perhaps with another frame colour
+    private ColorWindow? _colorWindow;
     private bool _setting, _ringing;
     private int _ringLeft;
     private string _lastRung = "";
@@ -63,10 +66,11 @@ internal sealed class ClockWindow : Window
         ShowInTaskbar = false;
         Topmost = _s.Topmost;
 
-        Look.T = _s.Style == "white" ? Theme.White : Theme.Black;
+        _look = _s.Style == "white" ? Theme.White : Theme.Black;
+        ApplyColors();
         _soundMode = _s.SoundMode is "off" or "hour" ? _s.SoundMode : "flip";
         ApplySoundMode();
-        _face = new ClockFace(_s.Seconds, _s.Compact) { Pinned = _s.Topmost };
+        _face = new ClockFace(_s.Seconds, _s.Compact, _s.Hour12) { Pinned = _s.Topmost };
         _guardTimer.Tick += (_, _) => GuardTopmost();
         if (_s.Topmost) _guardTimer.Start();
         _face.SetAlarm(_s.AlarmOn, _s.AlarmHour, _s.AlarmMinute);
@@ -448,6 +452,7 @@ internal sealed class ClockWindow : Window
         _s.Scale = _scale;
         _s.Topmost = Topmost;
         _s.Seconds = _face.Seconds;
+        _s.Hour12 = _face.Hour12;
         if (_compactReturn == null) _s.Compact = _face.Compact; // not while it is only enlarged for setting the alarm
         _s.SoundMode = _soundMode;
         _s.Sound = _soundMode != "off"; // read by versions before 1.2
@@ -469,12 +474,36 @@ internal sealed class ClockWindow : Window
         // Windows can take "always on top" away from a window (for example when the desktop is shown).
         // Watch for that and take it back at once.
         HwndSource.FromHwnd(_hwnd)?.AddHook(OnWindowMessage);
+
+        // The clock must not have a button on the taskbar (see TaskbarButton). Say so once the window is
+        // on screen, and again whenever it gets the keyboard, in case Windows adds a button at that moment.
+        ContentRendered += (_, _) => RemoveTaskbarButtonSoon();
+        Activated += (_, _) => TaskbarButton.Remove(_hwnd);
+    }
+
+    /// <summary>Windows sends this to every window when the taskbar has been built anew (Explorer restarted).</summary>
+    private static readonly int TaskbarCreated = (int)Native.RegisterWindowMessage("TaskbarCreated");
+
+    /// <summary>Now, and once more a moment later: Windows builds its taskbar buttons shortly after a window appears.</summary>
+    private void RemoveTaskbarButtonSoon()
+    {
+        if (_closed) return;
+        TaskbarButton.Remove(_hwnd);
+        var again = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1.5) };
+        again.Tick += (_, _) =>
+        {
+            again.Stop();
+            if (!_closed) TaskbarButton.Remove(_hwnd);
+        };
+        again.Start();
     }
 
     private IntPtr OnWindowMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
         if (msg == Native.WM_WINDOWPOSCHANGED && Topmost && !_fixingTop && !HasTopmostFlag())
             Dispatcher.BeginInvoke(KeepOnTop);
+
+        if (TaskbarCreated != 0 && msg == TaskbarCreated) Dispatcher.BeginInvoke(RemoveTaskbarButtonSoon);
 
         if (msg == Native.WM_MOVING && SnapToCentre(lParam))
         {
@@ -1100,9 +1129,157 @@ internal sealed class ClockWindow : Window
         Tick(); // the wake-up rhythm changes between seconds and minutes
     }
 
+    /// <summary>Change between the 24-hour clock and the 12-hour clock with its AM/PM card.</summary>
+    private void SetHour12(bool on)
+    {
+        if (_setting) CancelSet();
+        IntPtr bar = _hwnd != IntPtr.Zero ? TaskbarUnderClock() : IntPtr.Zero;
+        _face.Build(_face.Seconds, _face.Compact, on);
+        _face.Pinned = Topmost;
+        RestoreAlarmDisplay();
+        _face.SetTimeInstant(DateTime.Now);
+        ApplyScale();
+        // The clock got wider or narrower. On the taskbar it stays at the end of the bar; anywhere else
+        // it must not stick out of the screen.
+        if (bar != IntPtr.Zero) PlaceOnBar(bar);
+        else FitOnScreen();
+        KeepVisible();
+        _miHour12.IsChecked = on;
+        SaveState();
+    }
+
+    // ---------- colours of the digits, the flaps and the frame ----------
+
+    private bool WhiteLook => _look == Theme.White;
+
+    /// <summary>The colours chosen for the look in use ("#RRGGBB"), or null for the look's own.</summary>
+    private string? InkSetting
+    {
+        get => WhiteLook ? _s.DigitColorWhite : _s.DigitColor;
+        set
+        {
+            if (WhiteLook) _s.DigitColorWhite = value;
+            else _s.DigitColor = value;
+        }
+    }
+
+    private string? FlapSetting
+    {
+        get => WhiteLook ? _s.FlapColorWhite : _s.FlapColor;
+        set
+        {
+            if (WhiteLook) _s.FlapColorWhite = value;
+            else _s.FlapColor = value;
+        }
+    }
+
+    private string? FrameSetting
+    {
+        get => WhiteLook ? _s.FrameColorWhite : _s.FrameColor;
+        set
+        {
+            if (WhiteLook) _s.FrameColorWhite = value;
+            else _s.FrameColor = value;
+        }
+    }
+
+    private static Color? Chosen(string? hex) => Hsv.TryHex(hex, out var c) ? c : null;
+
+    /// <summary>Put a look and three colours in force. Null = the colour that belongs to the look.</summary>
+    private static void Dress(Theme look, Color? digits, Color? flaps, Color? frame)
+    {
+        var t = look;
+        if (flaps is Color flap) t = t.WithFlaps(flap);
+        if (frame is Color body) t = t.WithFrame(body);
+        Look.T = t;
+        Look.CustomInk = digits is Color ink ? Look.Solid(ink) : null;
+    }
+
+    /// <summary>Put the look and the saved colours in force (before the face is built, or followed by a repaint).</summary>
+    private void ApplyColors() => Dress(_look, Chosen(InkSetting), Chosen(FlapSetting), Chosen(FrameSetting));
+
+    private void RememberColor(string? hex, string? before)
+    {
+        // only a colour that was changed in this visit counts as "chosen"
+        if (hex == null || string.Equals(hex, before, StringComparison.OrdinalIgnoreCase)) return;
+        _s.RecentColors.RemoveAll(c => string.Equals(c, hex, StringComparison.OrdinalIgnoreCase));
+        _s.RecentColors.Insert(0, hex);
+        if (_s.RecentColors.Count > Settings.RecentColorsKept)
+            _s.RecentColors.RemoveRange(Settings.RecentColorsKept, _s.RecentColors.Count - Settings.RecentColorsKept);
+    }
+
+    /// <summary>
+    /// Open the small colour chooser next to the clock. While it is open the clock shows every colour tried
+    /// at once; Cancel puts the old ones back, Done keeps the new ones and adds them to the last five.
+    /// </summary>
+    private void OpenColorChooser()
+    {
+        if (_colorWindow != null)
+        {
+            _colorWindow.Activate();
+            return;
+        }
+
+        var recent = new List<Color>();
+        foreach (string hex in _s.RecentColors)
+            if (Hsv.TryHex(hex, out var rc)) recent.Add(rc);
+        var look = _look;
+        var ownFlap = ((GradientBrush)look.CardBottom).GradientStops[0].Color;
+        var ownFrame = ((GradientBrush)look.Body).GradientStops[1].Color;
+        var ownInk = ((SolidColorBrush)look.Digit).Color;
+
+        var w = new ColorWindow(Chosen(InkSetting), Chosen(FlapSetting), Chosen(FrameSetting), ownFlap, ownFrame,
+            flap => flap is Color f ? Theme.InkOn(f) : ownInk, recent) { Topmost = Topmost };
+        if (IsVisible) w.Owner = this; // stays in front of the clock and closes with it
+        _colorWindow = w;
+        w.Changed += () =>
+        {
+            Dress(look, w.Digits, w.Flaps, w.Frame);
+            _face.Repaint();
+        };
+        w.Closed += (_, _) =>
+        {
+            _colorWindow = null;
+            if (w.Accepted && look == _look)
+            {
+                static string? Hex(Color? c) => c is Color color ? Hsv.Hex(color) : null;
+                string? digits = Hex(w.Digits), flaps = Hex(w.Flaps), frame = Hex(w.Frame);
+                RememberColor(frame, FrameSetting);
+                RememberColor(flaps, FlapSetting);
+                RememberColor(digits, InkSetting);
+                InkSetting = digits;
+                FlapSetting = flaps;
+                FrameSetting = frame;
+                if (_closed) _s.Save();
+                else SaveState();
+            }
+            ApplyColors();
+            _face.Repaint();
+            if (!_closed) TrimSoon(1500);
+        };
+
+        // next to the clock: under it if there is room, otherwise above it
+        double k = ActualWidth > 0 ? ActualWidth / _face.DesignW : _scale;
+        var housing = new Rect(Left + _face.Housing.X * k, Top + _face.Housing.Y * k, _face.Housing.Width * k, _face.Housing.Height * k);
+        var work = SystemParameters.WorkArea;
+        var info = new Native.MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<Native.MONITORINFO>() };
+        if (_hwnd != IntPtr.Zero && Native.GetWindowRect(_hwnd, out var r)
+            && Native.GetMonitorInfo(Native.MonitorFromRect(ref r, Native.MONITOR_DEFAULTTONEAREST), ref info))
+        {
+            double dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
+            work = new Rect(info.rcWork.Left / dpi, info.rcWork.Top / dpi,
+                (info.rcWork.Right - info.rcWork.Left) / dpi, (info.rcWork.Bottom - info.rcWork.Top) / dpi);
+        }
+        w.PlaceNear(housing, work);
+        w.Show();
+        w.Activate();
+    }
+
     private void SetStyle(Theme theme)
     {
-        Look.T = theme;
+        _colorWindow?.Close(); // it shows the colours of the look that is being left
+        _look = theme;
+        ApplyColors();
         _face.Build(_face.Seconds, _face.Compact);
         _face.Pinned = Topmost;
         RestoreAlarmDisplay();
@@ -1191,10 +1368,15 @@ internal sealed class ClockWindow : Window
         var setAlarm = new MenuItem { Header = "Set alarm time" };
         setAlarm.Click += (_, _) => EnterSetMode();
 
-        _miBlack = new MenuItem { Header = "Black", IsChecked = Look.T == Theme.Black };
+        _miBlack = new MenuItem { Header = "Black", IsChecked = _look == Theme.Black };
         _miBlack.Click += (_, _) => SetStyle(Theme.Black);
-        _miWhite = new MenuItem { Header = "White", IsChecked = Look.T == Theme.White };
+        _miWhite = new MenuItem { Header = "White", IsChecked = _look == Theme.White };
         _miWhite.Click += (_, _) => SetStyle(Theme.White);
+        var colors = new MenuItem { Header = "Colors\u2026" };
+        colors.Click += (_, _) => OpenColorChooser();
+
+        _miHour12 = new MenuItem { Header = "12-hour time", IsChecked = _face.Hour12 };
+        _miHour12.Click += (_, _) => SetHour12(!_face.Hour12);
 
         _miTaskbar = new MenuItem { Header = "Put on the taskbar" };
         _miTaskbar.Click += (_, _) =>
@@ -1218,6 +1400,7 @@ internal sealed class ClockWindow : Window
         menu.Items.Add(_miTop);
         menu.Items.Add(_miTaskbar);
         menu.Items.Add(_miSeconds);
+        menu.Items.Add(_miHour12);
         menu.Items.Add(new Separator());
         menu.Items.Add(_miSoundFlip);
         menu.Items.Add(_miSoundHour);
@@ -1228,16 +1411,18 @@ internal sealed class ClockWindow : Window
         menu.Items.Add(new Separator());
         menu.Items.Add(_miBlack);
         menu.Items.Add(_miWhite);
+        menu.Items.Add(colors);
         menu.Items.Add(new Separator());
         menu.Items.Add(_miAutostart);
         menu.Items.Add(reset);
         menu.Items.Add(new Separator());
         menu.Items.Add(close);
+        menu.Closed += (_, _) => TrimSoon(5000);
         menu.Opened += (_, _) =>
         {
             _miAutostart.IsChecked = AutostartOn();
             _miTaskbar.IsChecked = OnTaskbar;
-            _miAlarm.Header = $"Alarm at {_s.AlarmHour:00}:{_s.AlarmMinute:00}";
+            _miAlarm.Header = $"Alarm at {ClockFace.TimeText(_s.AlarmHour, _s.AlarmMinute, _face.Hour12)}";
             _miAlarm.IsChecked = _s.AlarmOn;
         };
         return menu;

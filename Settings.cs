@@ -34,6 +34,24 @@ internal sealed class Settings
     /// <summary>"black" or "white".</summary>
     public string Style { get; set; } = "black";
 
+    /// <summary>12-hour clock with an AM/PM card. Off = 24-hour clock.</summary>
+    public bool Hour12 { get; set; }
+
+    /// <summary>
+    /// Colours chosen for the digits, the flaps and the frame, as "#RRGGBB": one set for the black clock,
+    /// one for the white clock. Missing = the colour that belongs to the look.
+    /// </summary>
+    public string? DigitColor { get; set; }
+    public string? DigitColorWhite { get; set; }
+    public string? FlapColor { get; set; }
+    public string? FlapColorWhite { get; set; }
+    public string? FrameColor { get; set; }
+    public string? FrameColorWhite { get; set; }
+
+    /// <summary>The last colours chosen, newest first, at most five.</summary>
+    public List<string> RecentColors { get; set; } = new();
+    public const int RecentColorsKept = 5;
+
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FlipClock", "settings.json");
 
@@ -50,6 +68,10 @@ internal sealed class Settings
                     s.SoundMode ??= s.Sound ? "flip" : "off"; // settings from 1.1 only had on/off
                     s.AlarmHour = Math.Clamp(s.AlarmHour, 0, 23);
                     s.AlarmMinute = Math.Clamp(s.AlarmMinute, 0, 59);
+                    s.RecentColors ??= new();
+                    s.RecentColors.RemoveAll(c => !Hsv.TryHex(c, out _));
+                    if (s.RecentColors.Count > RecentColorsKept)
+                        s.RecentColors.RemoveRange(RecentColorsKept, s.RecentColors.Count - RecentColorsKept);
                     return s;
                 }
             }

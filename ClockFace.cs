@@ -13,7 +13,7 @@ namespace FlipClock;
 internal sealed class SpacedText : FrameworkElement
 {
     private readonly double _size, _spacing;
-    private readonly Brush _brush;
+    private Brush _brush;
     private string _text = "";
     private Geometry _geo = Geometry.Empty;
 
@@ -29,6 +29,17 @@ internal sealed class SpacedText : FrameworkElement
 
     public double TextWidth { get; private set; }
     public double CapHeight { get; }
+
+    public Brush Brush
+    {
+        get => _brush;
+        set
+        {
+            if (ReferenceEquals(_brush, value)) return;
+            _brush = value;
+            InvalidateVisual();
+        }
+    }
 
     public string Text
     {
@@ -184,7 +195,7 @@ internal sealed class HeaderButton : FrameworkElement
             // the one to press: filled amber, dark lettering
             dc.DrawRoundedRectangle(t.Weekday, null, box, 5, 5);
             if (_hover) dc.DrawRoundedRectangle(Look.Solid(Color.FromArgb(0x38, 0xFF, 0xFF, 0xFF)), null, box, 5, 5);
-            ink = Look.Solid(Color.FromRgb(0x16, 0x14, 0x10));
+            ink = t.OnAccent;
         }
         else
         {
@@ -218,7 +229,7 @@ internal sealed class SetArrow : FrameworkElement
 
     protected override void OnRender(DrawingContext dc)
     {
-        var pen = Look.T.PinOn; // amber, round ends
+        var pen = Look.T.CardAccent; // amber, round ends
         if (_up) { dc.DrawLine(pen, new Point(1, 7), new Point(7, 1)); dc.DrawLine(pen, new Point(7, 1), new Point(13, 7)); }
         else { dc.DrawLine(pen, new Point(1, 1), new Point(7, 7)); dc.DrawLine(pen, new Point(7, 7), new Point(13, 1)); }
     }
@@ -323,10 +334,12 @@ internal sealed class ClockFace : Canvas
     private static readonly CultureInfo En = CultureInfo.GetCultureInfo("en-US");
 
     private readonly List<FlapModule> _digits = new();
+    private FlapModule? _meridiem; // the AM/PM card, only on the 12-hour clock
     private SpacedText _weekday = null!, _date = null!, _alarmLabel = null!;
     private PinButton _pin = null!;
     private BellButton _bell = null!;
     private Grip _grip = null!;
+    private HousingVisual _housing = null!;
     private readonly List<Rect> _digitRects = new();
     private readonly List<ColonModule> _colons = new();
     private readonly List<FrameworkElement> _setOnly = new(); // shown only while the alarm is being set
@@ -334,9 +347,12 @@ internal sealed class ClockFace : Canvas
     private bool _started, _pinned, _alarmOn, _setMode;
     private string _alarmText = "";
 
-    public ClockFace(bool seconds, bool compact = false) => Build(seconds, compact);
+    public ClockFace(bool seconds, bool compact = false, bool hour12 = false) => Build(seconds, compact, hour12);
 
     public bool Seconds { get; private set; }
+
+    /// <summary>12-hour clock: hours 1 to 12 and a card that shows AM or PM.</summary>
+    public bool Hour12 { get; private set; }
     public double DesignW { get; private set; }
     public double DesignH { get; private set; }
     public Rect Housing { get; private set; }
@@ -353,10 +369,12 @@ internal sealed class ClockFace : Canvas
     }
 
     /// <summary>(Re)build every part in the current colours. Called at start and when an option changes.</summary>
-    public void Build(bool seconds, bool compact = false)
+    public void Build(bool seconds, bool compact = false, bool? hour12 = null)
     {
         Seconds = seconds;
         Compact = compact;
+        Hour12 = hour12 ?? Hour12;
+        _meridiem = null;
         M = compact ? 14 : 40;
         Pad = compact ? 9 : 16;
         HeadH = compact ? 9 : 38;
@@ -378,6 +396,7 @@ internal sealed class ClockFace : Canvas
 
         int n = seconds ? 6 : 4, colons = seconds ? 2 : 1;
         double rowW = n * Look.ModW + colons * Look.ColonW + (n + colons - 1) * Gap;
+        if (Hour12) rowW += Gap + Look.MeridiemW;
         double hw = rowW + 2 * Pad, hh = HeadH + Look.ModH + Pad;
 
         DesignW = hw + 2 * M;
@@ -397,7 +416,8 @@ internal sealed class ClockFace : Canvas
 
         double rim = compact ? 4 : 5;
         var slot = new Rect(M + Pad - rim, M + HeadH - rim, rowW + 2 * rim, Look.ModH + 2 * rim);
-        Children.Add(new HousingVisual(Housing, slot, compact ? 11 : 16, compact ? 8 : 11));
+        _housing = new HousingVisual(Housing, slot, compact ? 11 : 16, compact ? 8 : 11);
+        Children.Add(_housing);
 
         double headMid = M + 4 + (HeadH - 5) / 2;
         PinRect = BellRect = DoneRect = CancelRect = Rect.Empty;
@@ -446,6 +466,13 @@ internal sealed class ClockFace : Canvas
             _digitRects.Add(new Rect(x, y, Look.ModW, Look.ModH));
             x += Look.ModW + Gap;
         }
+        if (Hour12)
+        {
+            _meridiem = FlapModule.Meridiem();
+            Children.Add(_meridiem);
+            SetLeft(_meridiem, x);
+            SetTop(_meridiem, y);
+        }
 
         // Shown only while the alarm time is being set: Done and Cancel where bell and pin normally are,
         // and an up and a down arrow on each of the four cards of the alarm time.
@@ -487,7 +514,7 @@ internal sealed class ClockFace : Canvas
     /// </summary>
     private ImageSource ShadowImage()
     {
-        string key = $"{Seconds}/{Compact}";
+        string key = $"{Seconds}/{Compact}/{Hour12}";
         if (ShadowCache.TryGetValue(key, out var cached)) return cached;
 
         var c = new Canvas { Width = DesignW, Height = DesignH };
@@ -564,11 +591,27 @@ internal sealed class ClockFace : Canvas
     /// <summary>Where digit number <paramref name="i"/> sits (0 and 1 are the hours, 2 and 3 the minutes).</summary>
     public Rect DigitRect(int i) => i >= 0 && i < _digitRects.Count ? _digitRects[i] : Rect.Empty;
 
+    /// <summary>A time in words: "07:05" on the 24-hour clock, "7:05 AM" on the 12-hour clock.</summary>
+    public static string TimeText(int hour, int minute, bool hour12) =>
+        hour12 ? $"{(hour + 11) % 12 + 1}:{minute:00} {(hour < 12 ? "AM" : "PM")}" : $"{hour:00}:{minute:00}";
+
+    /// <summary>
+    /// What the cards show for a time, one character per digit card. On the 12-hour clock the hours run
+    /// from 1 to 12 and a single-digit hour leaves the first card blank.
+    /// </summary>
+    private string Cards(int hour, int minute, int second)
+    {
+        string h = Hour12 ? ((hour + 11) % 12 + 1).ToString(CultureInfo.InvariantCulture).PadLeft(2) : $"{hour:00}";
+        return Seconds ? $"{h}{minute:00}{second:00}" : $"{h}{minute:00}";
+    }
+
+    private static char Half(int hour) => hour < 12 ? 'A' : 'P';
+
     /// <summary>Show whether the alarm is set, and for what time (shown next to the bell).</summary>
     public void SetAlarm(bool on, int hour, int minute)
     {
         _alarmOn = on;
-        _alarmText = $"{hour:00}:{minute:00}";
+        _alarmText = TimeText(hour, minute, Hour12);
         _bell.Armed = on;
         _bell.ToolTip = on ? $"Alarm at {_alarmText}. Click to switch it off." : "Alarm off. Click to set it.";
         PlaceAlarmLabel();
@@ -593,9 +636,37 @@ internal sealed class ClockFace : Canvas
     {
         if (Look.AlarmFlash == red) return;
         Look.AlarmFlash = red;
+        RepaintInk();
+        _bell.InvalidateVisual();
+    }
+
+    /// <summary>Paint the whole clock again (a colour changed).</summary>
+    public void Repaint()
+    {
+        RepaintFrame();
+        RepaintInk();
+    }
+
+    /// <summary>Paint the frame and everything written on it again (its colour changed).</summary>
+    private void RepaintFrame()
+    {
+        var t = Look.T;
+        _housing.InvalidateVisual();
+        _weekday.Brush = t.Weekday;
+        _date.Brush = t.Date;
+        _alarmLabel.Brush = t.Weekday;
+        _pin.InvalidateVisual();
+        _bell.InvalidateVisual();
+        _grip.InvalidateVisual();
+        foreach (var el in _setOnly) el.InvalidateVisual();
+    }
+
+    /// <summary>Paint the cards with their digits, dots and AM/PM letters again (a colour changed).</summary>
+    public void RepaintInk()
+    {
         foreach (var d in _digits) d.Repaint();
         foreach (var c in _colons) c.Repaint();
-        _bell.InvalidateVisual();
+        _meridiem?.Repaint();
     }
 
     /// <summary>
@@ -620,23 +691,26 @@ internal sealed class ClockFace : Canvas
     public void ShowAlarmDigits(int hour, int minute, bool turn)
     {
         _started = true;
-        string t = $"{hour:00}{minute:00}";
+        string t = Cards(hour, minute, 0);
         for (int i = 0; i < _digits.Count; i++)
         {
             char c = i < 4 ? t[i] : ' ';
             if (turn && i < 4) _digits[i].SetTarget(c); else _digits[i].SetInstant(c);
         }
+        if (turn) _meridiem?.SetTarget(Half(hour)); else _meridiem?.SetInstant(Half(hour));
     }
 
     /// <summary>Show a time. The first call after a build runs the board-style start-up shuffle.</summary>
     public void SetTime(DateTime now)
     {
         SetHeader(now);
-        string t = now.ToString(Seconds ? "HHmmss" : "HHmm", CultureInfo.InvariantCulture);
+        string t = Cards(now.Hour, now.Minute, now.Second);
+        char half = Half(now.Hour);
 
         if (_started)
         {
             for (int i = 0; i < _digits.Count; i++) _digits[i].SetTarget(t[i]);
+            _meridiem?.SetTarget(half);
             return;
         }
 
@@ -649,6 +723,12 @@ internal sealed class ClockFace : Canvas
             delay.Tick += (_, _) => { delay.Stop(); module.SetTarget(c); };
             delay.Start();
         }
+        if (_meridiem is { } card)
+        {
+            var delay = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120 + _digits.Count * 95) };
+            delay.Tick += (_, _) => { delay.Stop(); card.SetTarget(half); };
+            delay.Start();
+        }
     }
 
     /// <summary>Show a time at once, no motion (used after switching the seconds on or off, and for test pictures).</summary>
@@ -656,8 +736,9 @@ internal sealed class ClockFace : Canvas
     {
         SetHeader(now);
         _started = true;
-        string t = now.ToString(Seconds ? "HHmmss" : "HHmm", CultureInfo.InvariantCulture);
+        string t = Cards(now.Hour, now.Minute, now.Second);
         for (int i = 0; i < _digits.Count; i++) _digits[i].SetInstant(t[i]);
+        _meridiem?.SetInstant(Half(now.Hour));
     }
 
     public void DebugPose(int index, char from, char to, double angle)

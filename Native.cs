@@ -57,6 +57,9 @@ internal static class Native
     [DllImport("user32.dll")]
     public static extern bool IsWindow(IntPtr hwnd);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "RegisterWindowMessageW")]
+    public static extern uint RegisterWindowMessage(string name);
+
     public const uint GW_OWNER = 4;
 
     [DllImport("user32.dll")]
